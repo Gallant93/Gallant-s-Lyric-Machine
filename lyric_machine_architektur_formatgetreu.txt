@@ -1,0 +1,108 @@
+Zusammenfassung der Analyse-Architektur für die "Lyric Machine"
+
+Die Kernfunktionalität der Anwendung ist ein ausgeklügeltes System zur Analyse von Songtexten und Audioaufnahmen, das darauf abzielt, eine dynamische und lernfähige Wissensbasis zu erstellen, die als "Künstler-DNA" bezeichnet wird. Diese DNA dient als kontextueller Rahmen für alle nachfolgenden KI-gesteuerten Aufgaben wie Textgenerierung, Reimanalyse und Stil-Adaption.
+
+Die Analyse lässt sich in drei Hauptprozesse unterteilen:
+- Initiale Analyse (Lernen aus neuem Material)
+- Feedback-gesteuerte Re-Analyse (Korrektur durch den Nutzer)
+- Generalisierung (Ableitung übergeordneter Regeln)
+
+Prozess 1: Initiale Analyse eines Songs
+
+Dieser Prozess wird ausgelöst, wenn ein Nutzer eine Audiodatei hochlädt, eine Aufnahme startet oder einen Text manuell eingibt.
+
+Logik und Ablauf:
+
+Input-Verarbeitung (Frontend):
+Audio: Eine Audiodatei (.mp3, .wav etc.) oder eine Mikrofonaufnahme wird in einen Base64-String umgewandelt.
+Text: Ein manuell eingegebener Text wird direkt verwendet.
+
+Schritt 1: Transkription & Vor-Analyse (Backend-API: /api/analyze-audio)
+Zweck: Nur für Audio-Dateien. Die primäre Aufgabe ist die Umwandlung von Sprache in Text.
+Durchführung: Die Base64-Audiodaten werden an diesen Endpunkt gesendet. Eine Speech-to-Text-KI transkribiert die Lyrics. Optional kann dieselbe KI eine erste Schätzung für den Songtitel und den Performance-Stil (z.B. "gerappt" oder "gesungen") abgeben.
+Ergebnis: Die API liefert die transkribierten Lyrics und Metadaten (Titel, Stil) zurück.
+
+Schritt 2: Nutzer-Bestätigung (Frontend):
+Dem Nutzer wird der extrahierte Text und der vorgeschlagene Titel in einem Modal angezeigt. Er kann den Titel korrigieren. Dies stellt die Datenqualität für die nachfolgende Tiefenanalyse sicher.
+
+Schritt 3: Tiefenanalyse (Backend-API: /api/deep-analyze)
+Zweck: Dies ist die zentrale Analyse-Engine, die den Song in seine stilistischen und technischen Bestandteile zerlegt.
+
+Input: Die API erhält ein umfassendes JSON-Objekt mit:
+- Den finalen, bestätigten Lyrics.
+- Der vollständigen, aktuellen "Künstler-DNA" (erstellt durch die getUnifiedKnowledgeBase-Funktion im Frontend).
+- Einem Flag hasAudio, das anzeigt, ob Audiodaten verfügbar sind.
+- Falls hasAudio=true, die Base64-Audiodaten.
+
+Durchführung: Die Backend-KI (z.B. Gemini) erhält eine multimodale oder textbasierte Anweisung, die folgenden Analysen unter Berücksichtigung der Künstler-DNA durchzuführen:
+
+Strukturelle Analyse: Formatierung der Lyrics (z.B. Einfügen von [Verse]-, [Chorus]-Tags).
+
+Textbasierte Mustererkennung:
+- Silbenzählung: Ermittlung der Silbenanzahl pro Zeile (syllablePattern).
+- Betonungsmuster: Identifikation betonter Wörter/Silben (emphasisPattern).
+- Reimfluss-Analyse: Erkennung von Endreimen, Binnenreimen und komplexen Reimketten (rhymeFlowPattern).
+
+Inhaltliche Extraktion:
+- Charakter-Merkmale: Ableitung von Themen, Stimmungen und Motiven, die den Stil des Künstlers definieren (characterTraits).
+- Technische Fähigkeiten: Identifikation von rhetorischen Mitteln wie Metaphern, Alliterationen, fortgeschrittenen Reimschemata etc. (technicalSkills).
+
+Audio-basierte Rhythmus-Analyse (nur wenn hasAudio=true): Eine multimodale Analyse von Audio und Text, um die Performance zu bewerten:
+- Flow: Beschreibung des Timings (on-beat, off-beat, synkopiert).
+- Phrasierung: Analyse von Pausensetzung und Phrasenlänge.
+- Dynamik: Identifikation von Lautstärke- und Energievariationen in der Stimme.
+
+Ergebnis: Die API liefert ein JSON-Objekt zurück, das all diese Analyseergebnisse enthält.
+
+Speicherung (Frontend):
+Die Ergebnisse werden atomisiert und als separate Einträge in der "Bibliothek" des Nutzers gespeichert. Ein Song erzeugt:
+- Einen lyric-Eintrag mit dem Text und allen Mustern.
+- Mehrere style-Einträge (für jedes Charakter-Merkmal).
+- Mehrere technique-Einträge (für jede technische Fähigkeit).
+- Einen emphasis-Eintrag mit dem kompletten, nach betonten Silben markierten Text
+- Einen rhymeFlow-Eintrag mit der Erkenntnis des Reimflusses
+
+Diese neuen Einträge reichern sofort die Künstler-DNA für alle zukünftigen Analysen an.
+
+Prozess 2: Feedback-gesteuerte Re-Analyse
+
+Dieser Prozess erlaubt es dem Nutzer, die KI-Analyse zu korrigieren und zu verfeinern, was der wichtigste Lernmechanismus des Systems ist.
+
+Logik und Ablauf:
+
+Auslöser: Der Nutzer findet eine fehlerhafte Analyse (z.B. einen nicht erkannten Reim) in der Bibliotheksansicht.
+
+Korrektur-Input:
+- Textlich: Der Nutzer gibt eine schriftliche Erklärung ab (z.B. "Die Wörter X und Y reimen sich, weil...").
+- Auditiv (nur für Betonung): Der Nutzer nimmt sich selbst auf, wie er eine Zeile mit der korrekten Betonung spricht oder singt.
+
+Re-Analyse des spezifischen Musters (Backend-APIs: /api/reanalyze-explanation, /api/process-vocal-emphasis)
+Zweck: Gezielte Korrektur eines einzelnen Analyse-Aspekts.
+
+Durchführung: Die KI erhält die ursprünglichen Lyrics, die bisherige (falsche) Analyse und die neue Anweisung des Nutzers (Text oder Audio). Die Anweisung des Nutzers wird als "absolute Wahrheit" behandelt, die jede vorherige Logik überschreibt. Die KI wird aufgefordert, basierend auf dieser neuen Regel ein korrigiertes Muster (z.B. newEmphasisPattern) zu generieren.
+
+Ergebnis: Die API liefert das korrigierte Muster und ggf. eine textliche Zusammenfassung dessen, was sie aus der Korrektur gelernt hat.
+
+Update im Frontend:
+- Das spezifische Muster (emphasisPattern oder rhymeFlowPattern) wird im lyric-Eintrag aktualisiert.
+- Die Erklärung des Nutzers wird gespeichert, um den Kontext für zukünftige Analysen zu erhalten.
+
+Prozess 3: Generalisierung
+
+Nach einer spezifischen Korrektur versucht das System, eine allgemeingültige Regel abzuleiten.
+
+Logik und Ablauf:
+
+Auslöser: Direkt nach einer erfolgreichen Korrektur durch den Nutzer (Prozess 2).
+
+Re-Analyse der technischen Fähigkeiten (Backend-API: /api/reanalyze-technique)
+Zweck: Überprüfung, ob die spezifische Korrektur auf eine übergeordnete, bisher unentdeckte Technik des Künstlers hindeutet.
+
+Durchführung: Die KI erhält die Original-Lyrics und die neue Erkenntnis aus der Nutzerkorrektur. Die Anweisung lautet: "Basierend auf dieser neuen Information, dass der Künstler X tut, überprüfe die Liste der allgemeinen technischen Fähigkeiten, die aus diesem Song abgeleitet wurden. Gibt es eine neue, allgemeine Regel zu lernen?"
+
+Ergebnis: Eine potenziell aktualisierte Liste der technicalSkills.
+
+Update im Frontend:
+Die alten, aus diesem Song abgeleiteten technique-Einträge werden durch die neuen, verfeinerten Einträge ersetzt. Dies stellt sicher, dass das Gelernte nicht nur ein Einzelfall bleibt, sondern die Künstler-DNA auf einer höheren Abstraktionsebene verbessert.
+
+Zusammenfassend lässt sich sagen, dass das System ein iterativer Kreislauf ist: Es analysiert, präsentiert die Ergebnisse, empfängt Korrekturen vom Nutzer, verfeinert die spezifischen Analysen und versucht dann, aus diesen Korrekturen allgemeingültige Regeln abzuleiten. All diese Informationen fließen kontinuierlich in die zentrale "Künstler-DNA" ein und machen die KI mit jeder Interaktion präziser und persönlicher.

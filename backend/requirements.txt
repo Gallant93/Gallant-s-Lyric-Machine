@@ -1,0 +1,5 @@
+Flask
+Flask-Cors
+google-cloud-storage
+gunicorn
+google-generativeai

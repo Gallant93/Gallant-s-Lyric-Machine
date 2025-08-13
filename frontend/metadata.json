@@ -1,0 +1,8 @@
+{
+  "name": "Gallant's Lyric Machine",
+  "description": "Deine persönliche KI-Songwriting-Maschine. Trainiere sie mit deinen Texten, definiere deinen Stil und generiere neue Lyrics.",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "prompt": ""
+}

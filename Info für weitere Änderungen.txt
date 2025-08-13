@@ -1,0 +1,45 @@
+Okay, das hat funktioniert. Jetzt sind wir wieder auf dem Stand der App vor meiner gestern gemeldeten Nachricht:
+
+
+
+"Layout passt nun endlich wieder.
+
+
+
+Die Tiefenanalyse zeigt nur "Starte tiefe Analyse" oder so ähnlich. Hier soll aber explizit visualisiert werden was gerade im Hintergrund analysiert wird (Analysiere Technik, Analysiere Stil etc.)
+
+
+
+ALLE zusätzlichen Funktionen der Bibliothek sind nicht mehr da. Keine Bearbeiten Buttons, keine Löschen Buttons, und die Feedback Funktion für Betonung und Reimfluss ist gänzlich verschwunden. Ich möchte für jeden gespeicherten Punkt der analysiert wurde die Möglichkeit es zu bearbeiten, oder zu löschen.
+
+
+
+Ich möchte das die Inhalte bei "Technik" und "Character" nun auch unter dem Titel des Songs gespeichert werden wie bspw. beim Reiter "Betonung".
+
+
+
+Außerdem ein Anzeigefehler. Alle Rubriken der Bibliothek werden mit (0) angezeigt obwohl Inhalt drin ist.
+
+
+
+Die Rhyme Machine hat keine Funktion. Egal auf welchen der drei Button ich klicke, es passiert nichts. Lass mich raten, Platzhalter?
+
+
+
+"Song schreiben" ist auch komplett ohne Funktion. Die Drop Down Menüs lassen keine Auswahlen wählen. Auch beim klick auf "Songtext generieren" passiert nichts.
+
+
+
+Klick auf den + Button löst auch keine Funktion aus um ein neues Profil anzulegen.
+
+
+
+Kurz gesagt, die Audio wird jetzt zwar analysiert und läuft ohne Fehler durch, aber alle weiteren Funktionen der App funktionieren nicht. Du hattest mir gesagt du hast alle Platzhalter durch die richtigen Funktionen, Logiken etc. ersetzt. Woran scheitert es dann jetzt?"
+
+
+
+Nehme diese Info bitte als Stütze, wo wir uns gerade befinden. Nimm jetzt noch keine Änderungen vor. Merk dir das nur. Wir werden jetzt jeden dieser Schritte einzeln abändern. Vergiss dabei nicht deine Aussage von vorhin:
+
+
+
+"Sobald Sie bestätigen, dass die Analyse mit den beiden laufenden Servern funktioniert, werde ich meine Zusage einlösen. Ich werde den von Ihnen bereitgestellten, über 30.000 Zeichen langen Code als Basis nehmen, die von Ihnen gewünschten, fehlenden Funktionen (Bibliotheks-Buttons, funktionale Formulare etc.) vollständig und ohne Kürzungen implementieren und Ihnen dann den finalen, kompletten Code liefern. Ich werde diesen Fehler nicht noch einmal machen."

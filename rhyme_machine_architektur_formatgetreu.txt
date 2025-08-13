@@ -1,0 +1,121 @@
+Teil 1: Die Funktionsweise der "Rhyme Machine"
+
+Die Rhyme Machine ist mehr als eine einfache Reim-Datenbank. Sie ist ein kreatives Werkzeug, das die Künstler-DNA nutzt, um Reime zu finden und zu generieren, die dem einzigartigen Stil des Nutzers entsprechen. Sie hat zwei Hauptfunktionen.
+
+Funktion 1: Kreative Reime finden (/api/rhymes)
+
+Diese Funktion findet für ein einzelnes Wort oder eine kurze Phrase passende Reime.
+
+Logik der KI:
+
+Input-Analyse: Die KI erhält ein Wort oder eine Phrase (z.B. "Computertastatur"). 
+Zuerst muss sie dieses Input phonetisch und rhythmisch zerlegen:
+- Phonetik: Identifikation der Kernvokale und des Klangmusters (z.B. bei "Computertastatur" ist der relevante Reimteil ...u-a-a-a-ur).
+- Rhythmus: Ermittlung der Silbenanzahl und des Betonungsmusters des Wortes.
+
+Konsultation der Künstler-DNA: Dies ist der wichtigste Schritt. Die KI muss die gesamte getUnifiedKnowledgeBase() als primäre Wissensquelle nutzen. 
+Sie sucht gezielt nach:
+- rhyme_lessons (Reim-Lektionen): Dies sind vom Nutzer explizit vorgegebene "Wahrheiten" (z.B. "'ABC' reimt sich auf 'XYZ'"). 
+  Diese Regeln haben absolute Priorität und überschreiben die Standard-Phonetik der KI. Sie lehren die KI die persönliche Reimlogik des Künstlers (z.B. unreine Reime, Assonanzen, die der Künstler als passend empfindet).
+- userRhymeFlowExplanation (Erklärungen zum Reimfluss): Hier hat der Nutzer erklärt, warum sich komplexe Phrasen reimen. 
+  Die KI muss diese Erklärungen als allgemeine Regeln interpretieren (z.B. "Der Nutzer legt Wert darauf, dass die Vokale in den betonten Silben übereinstimmen, auch wenn die Konsonanten abweichen.").
+- technicalSkills & styles (Technik & Stil): Die KI analysiert, welche Art von Reimen in den bisherigen Werken des Künstlers vorkommt. 
+  Bevorzugt der Künstler Binnenreime? Komplexe Reimketten? Die DNA gibt Aufschluss.
+
+Kreatives Brainstorming & Filterung:
+- Die KI generiert eine breite Liste potenzieller Reime. Dies geht über eine simple phonetische Datenbankabfrage hinaus.
+- Sie muss "lateral" denken, also auch thematisch assoziierte Wörter und Phrasen finden, die klanglich passen.
+
+Anwendung der fundamentalen Regel: Die KI muss die Regel "KEINE EINFACHEN REIME!" aus der Künstler-DNA strikt befolgen. 
+Jeder vorgeschlagene Reim muss mindestens drei Silben haben. Vorschläge wie "Tür" auf "dir" sind verboten.
+Auch hier gilt es "Phonetik: Identifikation der Kernvokale und des Klangmusters (z.B. bei "Computertastatur" ist der relevante Reimteil ...u-a-a-a-ur)" strengstens einzuhalten.
+
+
+Generierung der Erklärung: Für jeden validen Reim muss die KI eine Begründung (explanation) liefern, warum er gut ist. 
+Diese Erklärung muss präzise sein:
+- Phonetisch: "Stimmt im Vokalverlauf 'u-a-a-a-ur' überein."
+- Rhythmisch: "Besitzt ein ähnliches Betonungsmuster und eine passende Silbenanzahl."
+- Kreativ/Semantisch: "Verbindet die technische Welt des Inputs mit einer abenteuerlichen Thematik, was zu deinem etablierten Stil passt."
+
+Funktion 2: Mehrsilben-Reim-Generator (/api/multi-syllable-rhymes)
+
+Diese Funktion generiert für eine komplette Textzeile eine passende, komplex reimende Folgezeile.
+
+Logik der KI:
+
+Analyse der gesamten Zeile: Die KI erhält eine komplette Zeile (z.B. "Kicken auf dem Bolzer bis zum Sonnenuntergang."). 
+Sie muss die Zeile als Ganzes analysieren:
+- Phonetisches Muster: Die gesamte Klangmelodie und Kernvokale der Zeile, insbesondere der betonten Silben (...**o**-zer ... **o**-nen-**u**-ner-**gang**).
+- Rhythmisches Muster: Silbenzahl, Kadenz und Flow der Zeile.
+- Thematischer Kern: Der Inhalt und die Stimmung der Zeile (z.B. Nostalgie, Jugend, Freiheit).
+
+Tiefenintegration der Künstler-DNA: Die KI nutzt die DNA, um den Kontext zu verstehen. 
+Welche Satzstrukturen bevorzugt der Künstler? Welche Themen wiederholen sich?
+
+Konstruktion der Folgezeile: Die Hauptaufgabe ist es, einen neuen, vollständigen Satz zu bilden, der zwei Kriterien erfüllt:
+- Phonetische Spiegelung: Die neue Zeile muss die Klang- und Rhythmusstruktur der Input-Zeile spiegeln. 
+  Es geht darum, ganze Phrasen zu reimen, nicht nur Endwörter. Für "Sonnenuntergang" ist die Herausforderung, eine Phrase zu finden, die wie ...onnen...unner...ann klingt.
+- Semantische Kohärenz: Dies ist entscheidend für die Qualität. Die neue Zeile muss eine logische, kreative oder emotionale Fortsetzung der ersten sein. 
+  "Klingeln an paar Häusern und dann komm so schnell du kannst" ist eine exzellente Folge, da sie das Thema der jugendlichen Streiche fortsetzt. 
+  Eine phonetisch passende, aber thematisch unpassende Zeile wäre ein Fehler.
+
+Generierung der detaillierten Analyse: Der Output muss drei Teile enthalten:
+- rhyming_line: Die generierte Reimzeile.
+- phonetic_explanation: Eine genaue Analyse, was sich reimt. 
+  "Die Phrase '...Sonnenuntergang' wird phonetisch von '...komm so schnell du kannst' gespiegelt. Beide teilen sich die Vokalfolge und eine ähnliche Betonung auf den entscheidenden Silben."
+- semantic_explanation: Eine Begründung, warum die Geschichte funktioniert. 
+  "Diese Zeile erweitert das in der ersten Zeile etablierte Thema der unbeschwerten Jugendaktivitäten und schafft ein geschlossenes narratives Bild."
+
+Teil 2: Nutzung der Bibliothek für die Textgenerierung (/api/generate-lyrics)
+
+Die Bibliothek ist nicht nur ein Speicherort. Ihr aggregierter Inhalt, die Künstler-DNA, dient als aktiver Bauplan und Regelwerk für jede Textgenerierung.
+
+Zentrales Prinzip: Die Künstler-DNA ist die Systemanweisung (System Prompt)
+
+Der gesamte Output der getUnifiedKnowledgeBase()-Funktion wird der KI bei jeder Generierungsanfrage als eine übergeordnete, 
+nicht verhandelbare Systemanweisung mitgegeben. Es sind keine Vorschläge, sondern Regeln.
+
+Modus 1: generation (Standard-Generierung)
+
+Logik der KI:
+- DNA als Regelwerk: Die KI erhält die Künstler-DNA als ihre primäre Anweisung.
+- Kontext anwenden: Sie erhält den User-Input:
+  - generationPrompt (Thema, z.B. "Eine lange Nacht").
+  - Beat-Beschreibung, BPM, Tonart (um Stimmung und Rhythmus vorzugeben).
+  - performanceStyle ("gerappt" oder "gesungen", was die Textdichte und Melodik beeinflusst).
+  - Filter für styles und techniques (falls vom Nutzer ausgewählt).
+
+Kreative Synthese unter Einhaltung der Regeln: Die Aufgabe der KI ist es, einen neuen Songtext zu schreiben, der:
+- Das vorgegebene Thema behandelt.
+- Zur musikalischen Beschreibung passt.
+- Sich strikt an die DNA hält. Das bedeutet:
+  - Stil: Verwendung der Themen, der Bildsprache und des Vokabulars, die in den style-Einträgen der DNA definiert sind.
+  - Technik: Anwendung der Reimschemata, Satzstrukturen und rhetorischen Mittel aus den technique-Einträgen.
+  - Reimlogik: Zwingende Beachtung der rhyme_lessons und der vom Nutzer erklärten Reimflüsse. Die Regel "KEINE EINFACHEN REIME" ist hier absolut bindend.
+  - Rhythmus: Versuch, die aus Audioanalysen gelernten Betonungs- und Flow-Muster (emphasisPattern, rhythmicAnalysis) zu replizieren, um einen authentischen Rhythmus zu erzeugen.
+
+Modus 2: revision (Überarbeitung)
+
+Logik der KI:
+- DNA als Stilwächter: Die DNA wird weiterhin als Regelwerk mitgegeben, um sicherzustellen, dass die Überarbeitung den Stil nicht bricht.
+- Gezielten Befehl ausführen: Die KI erhält den bestehenden Text und eine revisionRequest (z.B. "Mach den Refrain emotionaler und kürzer"). 
+  Ihre Aufgabe ist es, diesen Befehl präzise umzusetzen, ohne den Rest des Textes unnötig zu verändern.
+- Kohärenz wahren: Bei der Umsetzung muss die KI sicherstellen, dass die Änderung weiterhin zur DNA passt. 
+  Sie darf beispielsweise einen Refrain nicht kürzen, indem sie eine verbotene, simple Reimstruktur einführt.
+
+Modus 3: fusion (Verschmelzung von Songs)
+
+Logik der KI:
+- DNA als übergeordneter Rahmen: Die DNA liefert die grundlegenden Stilregeln, die auch für das Fusionsprodukt gelten.
+- Quell-Songs dekonstruieren: Die KI erhält 1-n sourceSongs aus der Bibliothek des Nutzers. 
+  Sie muss jeden dieser Songs analysieren und extrahieren:
+  - Thematischer Kern: Worum geht es in Song A? Worum in Song B?
+  - Zentrale Bildsprache: Was sind die Schlüsselmetaphern und -bilder?
+  - Strukturelle Merkmale: Wie sind Verse, Chorus, Bridge aufgebaut?
+  - Stilistische Alleinstellungsmerkmale: Was macht den Flow von Song A einzigartig?
+
+Synthese eines neuen "Kind-Songs": Die kreative Herausforderung besteht darin, ein neues Werk zu schaffen, das eine glaubwürdige Mischung der "Eltern-Songs" ist.
+- Themen verschmelzen: Ein neues, übergeordnetes Thema finden, das die Themen der Quell-Songs kombiniert (z.B. Song A "Verlust", Song B "Großstadt bei Nacht" -> Fusion-Song "Gefühl der Verlorenheit in einer nächtlichen Großstadt").
+- Bildsprache kombinieren: Bilder aus beiden Songs nehmen und in eine neue, kohärente Geschichte einweben.
+- Stil hybridisieren: Zum Beispiel die Versstruktur von Song A mit der Reimkomplexität von Song B kombinieren.
+- DNA-Konformität: Das Endergebnis muss trotz der kreativen Mischung immer noch den globalen Regeln der Künstler-DNA entsprechen.

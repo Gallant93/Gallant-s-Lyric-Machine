@@ -1,0 +1,14 @@
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args:
+  - 'build'
+  - '--tag'
+  - '${_IMAGE_NAME}'
+  - '--build-arg'
+  - 'VITE_BACKEND_URL=${_VITE_BACKEND_URL}'
+  - './frontend' # Wir geben explizit den Ordner an, der gebaut werden soll
+images:
+- '${_IMAGE_NAME}'
+substitutions:
+  _IMAGE_NAME: 'gcr.io/my-project/my-image' # Standardwert
+  _VITE_BACKEND_URL: 'http://default.url' # Standardwert
