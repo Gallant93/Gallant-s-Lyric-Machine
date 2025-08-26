@@ -14,6 +14,28 @@
   --font-display: 'Bebas Neue', cursive;
   --font-heading: 'Exo 2', sans-serif;
   --font-body: 'Inter', sans-serif;
+  
+  /* Einheitliche Button-Größen */
+  --button-height: 44px;
+  --button-padding: 0.875rem 1.5rem;
+  --button-border-radius: 8px;
+  --button-font-size: 0.95rem;
+  --button-font-weight: 500;
+  
+  /* Gefahren-Button-Farbe */
+  --danger-color: #f85149;
+  --danger-hover: #da3633;
+  
+  /* Einheitliche Abstände */
+  --spacing-xs: 0.5rem;
+  --spacing-sm: 1rem;
+  --spacing-md: 1.5rem;
+  --spacing-lg: 2rem;
+  --spacing-xl: 2.5rem;
+  
+  /* Einheitliche Komponenten-Abstände */
+  --component-margin: 16px;
+  --component-padding: 1rem;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -24,6 +46,25 @@ body {
   background-color: var(--background-color);
   line-height: 1.6;
 }
+
+/* Alle Überschriften verwenden die Exo 2-Schriftart */
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Exo 2', sans-serif;
+}
+
+/* === SYSTEM FÜR VERTIKALE ABSTÄNDE === */
+.v-stack {
+  display: flex;
+  flex-direction: column;
+  /* Standardausrichtung, kann bei Bedarf überschrieben werden */
+  align-items: stretch; 
+}
+
+/* Abstands-Modifikatoren */
+.v-stack--gap-xs { gap: var(--spacing-xs); } /* 0.5rem */
+.v-stack--gap-sm { gap: var(--spacing-sm); } /* 1rem */
+.v-stack--gap-md { gap: var(--spacing-md); } /* 1.5rem */
+.v-stack--gap-lg { gap: var(--spacing-lg); } /* 2rem */
 
 #root, .app-layout { min-height: 100vh; }
 .app-layout { display: flex; }
@@ -56,11 +97,27 @@ body {
     box-shadow: inset 0 0 25px rgba(0,0,0,0.5), 0 15px 40px rgba(0,0,0,0.3), 0 0 35px var(--primary-hover);
 }
 .start-button .ripple {
-  position: absolute; border-radius: 50%;
-  transform: scale(0); animation: ripple 1.2s linear;
+  position: absolute; 
+  border-radius: 50%;
+  transform: scale(0); 
+  animation: ripple 0.6s ease-out;
   background-color: rgba(255, 255, 255, 0.7);
+  pointer-events: none;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(0);
 }
-@keyframes ripple { to { transform: scale(4); opacity: 0; } }
+
+@keyframes ripple { 
+  0% { 
+    transform: translate(-50%, -50%) scale(0); 
+    opacity: 1; 
+  }
+  100% { 
+    transform: translate(-50%, -50%) scale(1); 
+    opacity: 0; 
+  }
+}
 .start-screen-container.fading-out { animation: fade-out-start 0.5s ease-in forwards; }
 @keyframes fade-out-start { from { opacity: 1; transform: scale(1); } to { opacity: 0; transform: scale(0.95); } }
 
@@ -88,7 +145,7 @@ body {
     width: 250px; background-color: var(--background-color); border-right: 1px solid var(--border-color);
     padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem; flex-shrink: 0;
 }
-.menu-header { font-family: var(--font-heading); font-size: 1.8rem; margin-bottom: 1rem; }
+.menu-header { font-family: 'Exo 2', sans-serif; font-size: 1.8rem; margin-bottom: 1rem; }
 .side-menu nav { display: flex; flex-direction: column; gap: 0.5rem; }
 .menu-button {
     display: flex; align-items: center; gap: 1rem; width: 100%; text-align: left;
@@ -96,30 +153,113 @@ body {
     padding: 0.8rem 1rem; font-size: 1rem; border-radius: 6px;
     font-weight: 500; transition: all 0.2s ease; cursor: pointer;
 }
+
+.menu-icon {
+    /* HIER STEUERST DU DIE GRÖSSE DER EMOJIS */
+    font-size: 24px; 
+    
+    /* Hilfs-Stile für eine saubere Ausrichtung */
+    width: 40px;
+    height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+/* Größe für das Icon im Haupt-Panel-Titel */
+.panel-title-icon {
+    font-size: 28px; /* Passe diesen Wert nach Wunsch an */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+  
 .menu-button:hover { background: rgba(139, 148, 158, 0.1); color: var(--text-color); }
 .menu-button.active { background-color: var(--primary-accent); color: white; font-weight: 600; }
 .menu-button.active svg { color: white; }
-.menu-button svg { width: 20px; height: 20px; color: var(--subtle-text-color); }
 
 .content-wrapper { flex-grow: 1; display: flex; flex-direction: column; }
 .app-header {
-    display: flex; align-items: center; justify-content: center;
-    padding: 1rem 1.5rem; border-bottom: 1px solid var(--border-color);
-    background-color: rgba(1, 4, 9, 0.7); backdrop-filter: blur(5px);
+    display: flex; 
+    align-items: center; 
+    justify-content: space-between;
+    padding: 1rem 2rem; 
+    border-bottom: 1px solid var(--border-color);
+    background-color: rgba(1, 4, 9, 0.7); 
+    backdrop-filter: blur(5px);
+    gap: 2rem;
 }
-.app-header h1 { font-family: var(--font-heading); font-size: 1.5rem; }
+.app-header h1 { 
+    font-family: 'Exo 2', sans-serif; 
+    font-size: 1.5rem; 
+    flex-shrink: 0;
+}
 .app-header h1 span { color: var(--primary-accent); }
 
-.view-content { flex-grow: 1; padding: 2rem; overflow-y: auto; }
+/* Spezielle Styles für den Header-Profile-Selector */
+.header-profile-selector {
+    display: flex; 
+    align-items: center; 
+    gap: 1rem;
+    margin-left: auto;
+}
+
+.header-profile-selector span {
+    color: var(--subtle-text-color);
+    font-size: 0.9rem;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+.header-profile-selector select {
+    min-width: 140px;
+    background-color: var(--panel-background-solid); 
+    border: 1px solid var(--border-color);
+    border-radius: 6px; 
+    color: var(--text-color); 
+    padding: 0.5rem 0.75rem;
+    font-size: 0.9rem;
+}
+
+.header-profile-selector .add-profile-button {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: var(--primary-accent);
+    color: white;
+    border: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+
+.header-profile-selector .add-profile-button:hover {
+    background-color: var(--primary-hover);
+    transform: scale(1.05);
+}
+
+.header-profile-selector .secondary-action-button {
+    height: 36px;
+    padding: 0 1rem;
+    font-size: 0.85rem;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.view-content { flex-grow: 1; padding: var(--spacing-lg); overflow-y: auto; }
 
 /* === PANEL-STRUKTUR === */
 .panel-container {
-    background: var(--panel-background); border: 1px solid var(--border-color);
-    border-radius: 8px; padding: 1.5rem; display: flex; flex-direction: column; gap: 1rem;
+    background: var(--panel-background); 
+    border-radius: 8px; padding: var(--spacing-md); display: flex; flex-direction: column; gap: var(--spacing-sm);
 }
-.panel-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; }
-.panel-header-title { display: flex; align-items: center; gap: 1rem; }
-.panel-header-title h2 { font-family: var(--font-heading); font-size: 1.75rem; }
+.panel-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--spacing-sm); }
+.panel-header-title { display: flex; align-items: center; gap: var(--spacing-sm); }
+.panel-header-title h2 { font-family: 'Exo 2', sans-serif; font-size: 1.75rem; }
 .panel-header-title svg { width: 28px; height: 28px; color: var(--subtle-text-color); }
 .panel-description { color: var(--subtle-text-color); margin-top: -0.5rem; max-width: 80%; }
 
@@ -131,98 +271,614 @@ body {
 .add-profile-button {
     background: none; border: 1px solid var(--border-color); color: var(--subtle-text-color);
     padding: 0.4rem; border-radius: 6px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px; transition: all 0.2s ease;
 }
 .add-profile-button:hover { border-color: var(--primary-accent); color: var(--primary-accent); }
 .add-profile-button svg { width: 18px; height: 18px; }
 
-/* === SPEZIFISCHE KOMPONENTEN === */
-.main-action-container { display: flex; gap: 1rem; align-items: center; }
+/* === EINHEITLICHE BUTTON-STYLES === */
 .main-action-button {
-    flex-grow: 1; padding: 1rem; font-size: 1.1rem; background-color: var(--primary-accent);
-    color: white; border: none; border-radius: 6px; cursor: pointer;
-    display: flex; align-items: center; justify-content: center;
+    height: var(--button-height);
+    padding: var(--button-padding);
+    font-size: var(--button-font-size);
+    font-weight: var(--button-font-weight);
+    background-color: var(--primary-accent);
+    color: white;
+    border: none;
+    border-radius: var(--button-border-radius);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start; /* KORREKTUR: Linksbündigkeit statt Zentrierung */
+    transition: all 0.2s ease;
+    text-decoration: none;
+    min-width: 120px;
 }
-.main-action-button.full-width { width: 100%; }
-.record-button {
-    width: 54px; height: 54px; flex-shrink: 0;
-    background-color: var(--panel-background-solid); border: 1px solid var(--border-color);
-    border-radius: 50%; display: flex; align-items: center; justify-content: center;
-    cursor: pointer; transition: all 0.2s ease;
-}
-.record-button:hover { border-color: var(--record-color); }
-.record-dot { width: 18px; height: 18px; background-color: var(--record-color); border-radius: 50%; }
 
-.divider {
-    display: flex; align-items: center; text-align: center; color: var(--subtle-text-color);
-    margin: 1.5rem 0; font-size: 0.9rem;
+.main-action-button:hover {
+    background-color: var(--primary-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(56, 139, 253, 0.3);
 }
-.divider::before, .divider::after {
-    content: ''; flex: 1; border-bottom: 1px solid var(--border-color);
-}
-.divider::before { margin-right: .75em; }
-.divider::after { margin-left: .75em; }
 
-textarea, input[type="text"], select {
-    background-color: var(--panel-background-solid); border: 1px solid var(--border-color);
-    border-radius: 6px; color: var(--text-color); padding: 0.75rem; font-size: 1rem;
-    width: 100%; font-family: inherit;
+.main-action-button:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 6px rgba(56, 139, 253, 0.3);
 }
-textarea { min-height: 120px; resize: vertical; }
+
+.main-action-button.full-width {
+    width: 100%;
+}
+
+.main-action-button:disabled {
+    background-color: var(--subtle-text-color);
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+.main-action-button:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(56, 139, 253, 0.3);
+}
 
 .secondary-action-button {
-    background-color: #21262d; border: 1px solid var(--border-color);
-    color: var(--primary-hover); padding: 0.75rem 1.25rem; border-radius: 6px;
-    font-size: 1rem; font-weight: 500; cursor: pointer; align-self: flex-start;
+    height: var(--button-height);
+    padding: var(--button-padding);
+    font-size: var(--button-font-size);
+    font-weight: var(--button-font-weight);
+    background-color: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--subtle-text-color);
+    border-radius: var(--button-border-radius);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start; /* KORREKTUR: Linksbündigkeit statt Zentrierung */
+    transition: all 0.2s ease;
+    text-decoration: none;
+    min-width: 120px;
 }
-.secondary-action-button:hover { background-color: #30363d; }
-.secondary-action-button.full-width { width: 100%; justify-content: center; }
+
+.secondary-action-button:hover {
+    border-color: var(--primary-accent);
+    color: var(--primary-accent);
+    background-color: rgba(56, 139, 253, 0.05);
+    transform: translateY(-1px);
+}
+
+.secondary-action-button:active {
+    transform: translateY(0);
+}
+
+.secondary-action-button.full-width {
+    width: 100%;
+}
+
+.secondary-action-button:disabled {
+    color: var(--subtle-text-color);
+    border-color: var(--border-color);
+    cursor: not-allowed;
+    transform: none;
+}
+
+.danger-action-button {
+    height: var(--button-height);
+    padding: var(--button-padding);
+    font-size: var(--button-font-size);
+    font-weight: var(--button-font-weight);
+    background-color: var(--danger-color);
+    border: 1px solid var(--danger-color);
+    color: white;
+    border-radius: var(--button-border-radius);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start; /* KORREKTUR: Linksbündigkeit statt Zentrierung */
+    transition: all 0.2s ease;
+    text-decoration: none;
+    min-width: 120px;
+}
+
+.danger-action-button:hover {
+    background-color: var(--danger-hover);
+    border-color: var(--danger-hover);
+    transform: translateY(-1px);
+}
+
+.danger-action-button:active {
+    transform: translateY(0);
+}
+
+.analysis-controls {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    align-items: flex-start; /* KORREKTUR: Linksbündigkeit statt Zentrierung */
+    width: 100%;
+    max-width: 400px;
+    margin: var(--spacing-sm) 0; /* KORREKTUR: Kein auto-Margin mehr */
+    padding: var(--spacing-md);
+    background-color: var(--panel-background);
+    border: 1px solid var(--border-color);
+    border-radius: var(--button-border-radius);
+}
+
+.loading-bar {
+    width: 100%;
+    height: 12px;
+    background-color: var(--panel-background-solid);
+    border-radius: 6px;
+    overflow: hidden;
+    position: relative;
+    border: 1px solid var(--border-color);
+}
+
+.loading-progress {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-accent), var(--primary-hover));
+    border-radius: 6px;
+    animation: loading-animation 2s ease-in-out infinite;
+    width: 100%;
+    box-shadow: 0 0 10px rgba(56, 139, 253, 0.3);
+}
+
+@keyframes loading-animation {
+    0% { transform: translateX(-100%); }
+    50% { transform: translateX(0%); }
+    100% { transform: translateX(100%); }
+}
+
+.action-button {
+    height: 36px;
+    padding: 0.5rem 1rem;
+    font-size: 0.85rem;
+    font-weight: 500;
+    background: none;
+    border: 1px solid var(--border-color);
+    color: var(--subtle-text-color);
+    border-radius: 6px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    min-width: 80px;
+}
+
+.action-button:hover {
+    border-color: var(--primary-accent);
+    color: var(--primary-accent);
+    background-color: rgba(56, 139, 253, 0.1);
+    transform: translateY(-1px);
+}
+
+.action-button:active {
+    transform: translateY(0);
+}
+
+.action-button:focus {
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(56, 139, 253, 0.2);
+}
+
+.action-button:active {
+    transform: translateY(0);
+}
+
+.action-button.delete:hover {
+    border-color: var(--record-color);
+    color: var(--record-color);
+    background-color: rgba(248, 81, 73, 0.1);
+}
+
+.action-button:disabled {
+    color: var(--subtle-text-color);
+    border-color: var(--border-color);
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* === SPEZIFISCHE KOMPONENTEN === */
+.main-action-container { 
+    display: flex; 
+    align-items: center; 
+    justify-content: flex-start; /* KORREKTUR: Linksbündigkeit statt Zentrierung */
+    /* gap entfernt - wird jetzt durch .v-stack gesteuert */
+}
+
+/* Spezielle Styles für die Text-Eingabe-Sektion */
+.text-input-section {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    max-width: 800px;
+    margin: 0; /* KORREKTUR: Kein auto-Margin mehr */
+    align-items: flex-start; /* KORREKTUR: Linksbündigkeit statt Zentrierung */
+    /* gap entfernt - wird jetzt durch .v-stack gesteuert */
+}
+
+.text-input-section .section-header {
+    width: 100%;
+}
+
+.text-input-section .form-group {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start; /* KORREKTUR: Linksbündigkeit statt Zentrierung */
+}
+
+.text-input-section p {
+    color: var(--subtle-text-color);
+    font-size: 0.95rem;
+    margin: 0;
+    text-align: left; /* KORREKTUR: Linksbündigkeit statt Zentrierung */
+}
+
+.text-input-section .secondary-action-button {
+    margin-bottom: 1rem;
+    align-self: flex-start; /* KORREKTUR: Erzwingt Linksbündigkeit */
+}
+
+/* === RHYME MACHINE STYLES === */
+
+/* Rhyme-Step-Container für bessere Button-Ausrichtung */
+.rhyme-step-container {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.rhyme-step-container input {
+    flex-grow: 1;
+    min-width: 0;
+}
+
+.rhyme-step-container .main-action-button {
+    flex-shrink: 0;
+    align-self: flex-start; /* KORREKTUR: Erzwingt Linksbündigkeit */
+    margin: 0;
+}
+
+/* Rhyme-Lesson-Input für bessere Textfeld-Verteilung */
+.rhyme-lesson-input {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+}
+
+.rhyme-lesson-input input {
+    flex: 1;
+    min-width: 120px;
+    max-width: 180px;
+}
+
+.rhyme-lesson-input span {
+    color: var(--subtle-text-color);
+    font-size: 0.9rem;
+    font-weight: 500;
+    white-space: nowrap;
+    flex-shrink: 0;
+    padding: 0 0.25rem;
+}
+
+/* Rhyme-Multi-Input für den Mehrsilben-Reim-Generator */
+.rhyme-multi-input {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.rhyme-multi-input input {
+    flex-grow: 1;
+    min-width: 0;
+}
+
+.rhyme-multi-input .secondary-action-button {
+    flex-shrink: 0;
+    align-self: flex-start; /* KORREKTUR: Erzwingt Linksbündigkeit */
+    margin: 0;
+}
 
 
-.sub-panel { margin-top: 2rem; padding-top: 1.5rem; border-top: 1px dashed var(--border-color); display: flex; flex-direction: column; gap: 1rem; }
+
+/* === ALLGEMEINE BUTTON-POSITIONIERUNG === */
+/* Alle alten Button-Positionierungsregeln entfernt - werden jetzt durch .v-stack gap gesteuert */
+
+/* Hilfsklasse, um ein Element links auszurichten */
+.align-start {
+    align-self: flex-start;
+}
+
+/* Button Container für horizontale Button-Anordnung */
+.button-container {
+    display: flex;
+    gap: var(--spacing-sm); /* Standard-Abstand (1rem) zwischen Buttons */
+    align-items: center;
+    justify-content: flex-start; /* Linksbündigkeit */
+}
+
+/* === SONG-GENERIERUNG OPTIMIERUNGEN === */
+
+/* Kompaktere Form-Gruppen */
+.form-group {
+    display: flex;
+    flex-direction: column;
+}
+
+
+
+/* Gilt jetzt für ALLE form-group Labels */
+.form-group label {
+    margin-bottom: 0.25rem;
+    font-size: 0.9rem;
+}
+
+/* Einheitliche Eingabefelder - alle exakt gleich groß */
+.form-grid input,
+.form-grid select,
+.form-grid textarea {
+    padding: 0.5rem 0.75rem;
+    height: 36px;                    /* Feste Höhe statt min-height */
+    box-sizing: border-box;          /* Padding und Border in Höhe einrechnen */
+    line-height: 1.2;                /* Einheitliche Zeilenhöhe */
+}
+
+.form-grid textarea {
+    min-height: 60px;
+    max-height: 80px;
+}
+
+/* Eine einzige, allgemeingültige Regel für alle Form-Grids */
+.form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 2rem;          /* Konsistenter Abstand */
+    align-items: end;     /* Richtet alle Elemente unten aus */
+}
+
+
+
+/* Allgemeine Layout-Regel für Song-Struktur-Container */
+.song-structure {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-lg); /* 2rem */
+}
+
+/* Struktur-Abschnitte erhalten v-stack-Eigenschaften für saubere vertikale Abstände */
+.structure-section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-sm); /* Grundabstand zwischen Titel und Inhalt */
+}
+
+
+
+/* Kompaktere Panel-Abstände */
+.sub-panel {
+    padding-top: 1rem;
+}
+
+/* Kompaktere Output-Container */
+.output-container {
+    padding: 0.75rem;
+    min-height: 120px;
+}
+
+
+
+/* Buttons nach Rhyme-Step-Container */
+.rhyme-step-container + .output-container {
+    /* margin-top entfernt - wird jetzt durch .v-stack gap gesteuert */
+}
+
+.rhyme-step-container .main-action-button {
+    margin-left: 1rem;
+}
+
+/* Buttons in Output-Containern */
+.output-container .secondary-action-button,
+.output-container .main-action-button {
+    align-self: flex-start; /* KORREKTUR: Erzwingt Linksbündigkeit */
+}
+
+/* Buttons nach Dividern */
+.divider + .text-input-section .secondary-action-button {
+    /* margin-top entfernt - wird jetzt durch .v-stack gap gesteuert */
+}
+
+/* Buttons in Modal-Aktionen */
+.modal-actions .secondary-action-button,
+.modal-actions .main-action-button {
+    min-width: 100px;
+}
+
+/* Buttons in Item-Actions */
+.item-actions .action-button {
+    margin: 0;
+}
+
+/* Buttons in Accordion-Content */
+.accordion-content .actions .action-button {
+    margin: 0;
+}
+
+/* Buttons in Library-Header */
+.library-header .action-button {
+    margin: 0;
+}
+
+/* Buttons in Tab-Buttons */
+.library-tabs .tab-button {
+    margin: 0;
+}
+
+/* Buttons in Menu-Buttons */
+.side-menu .menu-button {
+    margin: 0;
+}
+
+/* Buttons in Profile-Selector */
+.profile-selector .add-profile-button {
+    margin: 0;
+}
+
+/* Buttons in Main-Action-Container */
+.main-action-container .main-action-button,
+.main-action-container .record-button {
+    margin: 0;
+}
+
+/* Buttons in Feedback-Section */
+.feedback-section .secondary-action-button {
+    align-self: flex-start; /* KORREKTUR: Erzwingt Linksbündigkeit */
+}
+
+/* Buttons in Grouped-Item-Container */
+.grouped-item-container .action-button {
+    margin: 0;
+}
+
+/* Buttons in Simple-Item-List */
+.simple-item-list .action-button {
+    margin: 0;
+}
+
+/* Buttons in Chat-Container */
+.chat-container .secondary-action-button {
+    align-self: flex-start; /* KORREKTUR: Erzwingt Linksbündigkeit */
+}
+
+.record-button {
+    width: 54px; 
+    height: 54px; 
+    flex-shrink: 0;
+    background-color: var(--panel-background-solid); 
+    border: 1px solid var(--border-color);
+    border-radius: 50%; 
+    display: flex; 
+    align-items: center; 
+    justify-content: center;
+    cursor: pointer; 
+    transition: all 0.2s ease;
+}
+
+.record-button:hover { 
+    border-color: var(--record-color);
+    transform: scale(1.05);
+    box-shadow: 0 0 15px rgba(248, 81, 73, 0.3);
+}
+
+.record-button:active {
+    transform: scale(1);
+}
+
+.record-dot { 
+    width: 18px; 
+    height: 18px; 
+    background-color: var(--record-color); 
+    border-radius: 50%; 
+}
+
+.divider {
+    display: flex; 
+    align-items: center; 
+    text-align: left; /* KORREKTUR: Linksbündigkeit statt Zentrierung */
+    color: var(--subtle-text-color);
+    margin: 0; 
+    font-size: 0.9rem;
+}
+.divider::before, .divider::after {
+    content: ''; 
+    flex: 0; /* KORREKTUR: Keine gleichmäßige Verteilung */
+    border-bottom: 1px solid var(--border-color);
+}
+.divider::before { 
+    margin-right: .75em; 
+    width: 2rem; /* KORREKTUR: Feste Breite für die linke Linie */
+}
+.divider::after { 
+    margin-left: .75em; 
+    flex: 1; /* KORREKTUR: Rechte Linie nimmt den restlichen Platz ein */
+}
+
+textarea, input[type="text"], select {
+    color-scheme: dark;
+    background-color: #FFFFFF14; /* KORREKTUR: Transparenter Hintergrund für bessere optische Konsistenz */
+    border: 1px solid var(--border-color);
+    border-radius: 6px; 
+    color: var(--text-color); 
+    padding: 0.75rem; 
+    font-size: 1rem;
+    width: 100%; 
+    font-family: inherit;
+    box-sizing: border-box;          /* Padding und Border in Höhe einrechnen */
+    line-height: 1.2;                /* Einheitliche Zeilenhöhe */
+}
+
+/* Globale Hover- und Fokus-Effekte für alle Formularelemente */
+textarea:hover, input[type="text"]:hover, select:hover {
+    border-color: #666;
+}
+
+textarea:focus, input[type="text"]:focus, select:focus {
+    outline: none;
+    border-color: #4a90e2;
+    box-shadow: 0 0 0 2px rgba(74, 144, 226, 0.3);
+}
+
+textarea { min-height: 120px; resize: vertical; }
+
+.sub-panel { padding-top: 1.5rem; border-top: 1px dashed var(--border-color); display: flex; flex-direction: column; gap: 1rem; }
 .sub-panel h3 { font-family: var(--font-heading); margin-bottom: 0; }
 .sub-panel p { color: var(--subtle-text-color); font-size: 0.9rem; margin: 0; }
 .rhyme-lesson-input { display: flex; gap: 1rem; align-items: center; }
 .rhyme-lesson-input span { color: var(--subtle-text-color); }
 
 /* Stile für die Bibliothek */
-.library-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem;}
+.library-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; }
 .library-tabs { display: flex; flex-wrap: wrap; gap: 0.5rem; border-bottom: 1px solid var(--border-color); flex-grow: 1;}
 .tab-button {
     background: none; border: none; padding: 0.75rem 1rem;
-    color: var(--subtle-text-color); font-size: 0.9rem;
+    color: var(--text-color); font-size: 0.9rem;
     border-bottom: 2px solid transparent; cursor: pointer;
+    transition: all 0.2s ease;
 }
 .tab-button:hover { color: var(--text-color); }
 .tab-button.active { color: var(--primary-accent); border-bottom-color: var(--primary-accent); font-weight: 600; }
-.library-content { padding: 1rem; background-color: var(--panel-background-solid); border-radius: 6px; min-height: 200px; color: var(--subtle-text-color); }
-.library-list { display: flex; flex-direction: column; gap: 0.5rem; }
+.library-content { padding: 1rem; border-radius: 6px; min-height: 200px; }
+/* .library-list Regel entfernt - wird durch die allgemeine .item-list-container Regel ersetzt */
 .library-item {
-  background-color: var(--background-color);
   border: 1px solid var(--border-color); border-radius: 6px;
 }
 .accordion-header {
   display: flex; justify-content: space-between; align-items: center;
   padding: 1rem; cursor: pointer;
 }
-.accordion-header:hover { background-color: rgba(139, 148, 158, 0.05); }
+.accordion-header:hover { background-color: rgba(255, 255, 255, 0.05); }
 .accordion-icon { transition: transform 0.2s ease-in-out; }
 .accordion-icon.open { transform: rotate(180deg); }
 .accordion-content {
   padding: 0 1rem 1rem 1rem; border-top: 1px solid var(--border-color);
 }
-.accordion-content h4 { margin-top: 1rem; color: var(--primary-hover); }
+.accordion-content h4 { /* margin-top entfernt - wird jetzt durch .v-stack gap gesteuert */ }
 .accordion-content pre {
-    white-space: pre-wrap; word-wrap: break-word; background-color: #010409;
+    white-space: pre-wrap; word-wrap: break-word;
     padding: 0.5rem; border-radius: 4px;
 }
 
 /* Stile für "Song schreiben" Ansicht */
-.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
-.form-group { display: flex; flex-direction: column; gap: 0.5rem; }
 .form-group.span-2 { grid-column: span 2; }
 .form-group label { font-size: 0.9rem; font-weight: 500; color: var(--subtle-text-color); }
 .output-container {
-    margin-top: 1.5rem; padding: 1rem; border: 1px solid var(--border-color);
+    padding: 1rem; border: 1px solid var(--border-color);
     border-radius: 6px; min-height: 150px; background-color: var(--panel-background-solid);
 }
 .output-container .placeholder { color: var(--subtle-text-color); }
@@ -236,63 +892,81 @@ textarea { min-height: 120px; resize: vertical; }
 .modal-content {
     background: var(--panel-background-solid); border: 1px solid var(--border-color);
     border-radius: 8px; padding: 1.5rem 2rem; width: 90%; max-width: 500px;
-    display: flex; flex-direction: column; gap: 1rem;
+    /* Layout-Regel entfernt - wird durch die allgemeine .item-list-container Regel ersetzt */
 }
 .modal-content.wide { max-width: 800px; }
 .modal-actions {
-    display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1rem;
+    display: flex; justify-content: flex-end; gap: 0.75rem;
 }
 .modal-actions .main-action-button, .modal-actions .secondary-action-button {
-    padding: 0.6rem 1.2rem; font-size: 1rem; align-self: auto;
+    min-width: 100px;
 }
-.lyrics-editor { min-height: 40vh; font-family: monospace; }
-.loading-overlay {
-    position: fixed; inset: 0; background-color: rgba(0, 0, 0, 0.8);
-    color: white; display: flex; align-items: center; justify-content: center;
-    font-size: 1.5rem; z-index: 2000;
-}
+.lyrics-editor { min-height: 40vh; font-family: 'Inter', sans-serif; /* <-- Monospace durch Inter ersetzt */ }
 .status-message {
-    position: fixed; bottom: 2rem; left: 50%; transform: translateX(-50%);
-    padding: 0.75rem 1.5rem; border-radius: 6px; z-index: 1500;
-    color: white; font-weight: 500;
+    position: fixed; 
+    top: 20px; 
+    right: 20px; 
+    max-width: 400px; /* Begrenzt die Breite */
+    padding: 12px 20px; /* Reduziert den Padding */
+    border-radius: 8px; 
+    z-index: 1500;
+    color: white; 
+    font-weight: 500;
+    font-size: 14px; /* Kleinere Schriftgröße */
+    line-height: 1.4; /* Bessere Lesbarkeit */
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15); /* Subtiler Schatten */
+    word-wrap: break-word; /* Verhindert Überlauf */
+    overflow-wrap: break-word; /* Moderne Browser-Unterstützung */
+    animation: slideIn 0.3s ease;
 }
-.status-message.success { background-color: #3fb950; }
-.status-message.error { background-color: #f85149; }
 
-/* Am Ende der index.css hinzufügen */
+.status-message.success { 
+    background-color: rgba(76, 175, 80, 0.95); /* Etwas transparenter */
+    border: 1px solid rgba(76, 175, 80, 0.3);
+}
+
+.status-message.error { 
+    background-color: rgba(244, 67, 54, 0.95); /* Etwas transparenter */
+    border: 1px solid rgba(244, 67, 54, 0.3);
+}
+
+/* Responsive Anpassungen für kleine Bildschirme */
+@media (max-width: 768px) {
+    .status-message {
+        top: 10px;
+        right: 10px;
+        left: 10px; /* Nutzt die volle Breite auf kleinen Bildschirmen */
+        max-width: none; /* Entfernt die Breitenbegrenzung auf kleinen Bildschirmen */
+        font-size: 13px; /* Noch kleinere Schrift auf mobilen Geräten */
+        padding: 10px 16px; /* Kompakterer Padding auf mobilen Geräten */
+    }
+}
+
+/* Für sehr kleine Bildschirme */
+@media (max-width: 480px) {
+    .status-message {
+        top: 8px;
+        right: 8px;
+        left: 8px;
+        padding: 8px 12px;
+        font-size: 12px;
+    }
+}
+
+@keyframes slideIn {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
 
 /* Stile für Bibliotheks-Aktionen */
 .accordion-content .actions {
     display: flex;
     justify-content: flex-end;
     gap: 0.5rem;
-    margin-top: 1rem;
-}
-
-.action-button {
-    background: none;
-    border: 1px solid var(--border-color);
-    color: var(--subtle-text-color);
-    padding: 0.3rem 0.6rem;
-    font-size: 0.8rem;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-}
-
-.action-button:hover {
-    border-color: var(--primary-accent);
-    color: var(--primary-accent);
-}
-
-.action-button.delete:hover {
-    border-color: var(--record-color);
-    color: var(--record-color);
 }
 
 /* Feedback Sektion */
 .feedback-section {
-    margin-top: 1.5rem;
     padding-top: 1.5rem;
     border-top: 1px dashed var(--border-color);
     display: flex;
@@ -308,6 +982,7 @@ textarea { min-height: 120px; resize: vertical; }
     display: flex;
     gap: 0.75rem;
     align-items: center;
+    justify-content: flex-end;
 }
 .item-actions.top {
     justify-content: flex-end;
@@ -315,29 +990,8 @@ textarea { min-height: 120px; resize: vertical; }
     padding-bottom: 1rem;
     border-bottom: 1px solid var(--border-color);
 }
-.action-button {
-    background: none;
-    border: 1px solid var(--border-color);
-    color: var(--subtle-text-color);
-    padding: 0.4rem 0.8rem;
-    font-size: 0.85rem;
-    font-weight: 500;
-    border-radius: 6px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-}
-.action-button:hover {
-    border-color: var(--primary-accent);
-    color: var(--primary-accent);
-    background-color: rgba(56, 139, 253, 0.1);
-}
-.action-button.delete:hover {
-    border-color: #f85149;
-    color: #f85149;
-    background-color: rgba(248, 81, 73, 0.1);
-}
+
 .feedback-section {
-    margin-top: 1.5rem;
     padding-top: 1.5rem;
     border-top: 1px dashed var(--border-color);
     display: flex;
@@ -358,6 +1012,95 @@ textarea { min-height: 120px; resize: vertical; }
     width: 12px;
     height: 12px;
 }
+
+/* === KÜNSTLER DNA ANSICHT === */
+/* Verwendet jetzt die allgemeinen Regeln der anderen Seiten */
+
+/* Verwendet jetzt die allgemeinen h3-Regeln */
+
+/* Verwendet jetzt die allgemeinen .panel-container Regeln */
+
+/* Verwendet jetzt die allgemeinen Dropdown-Regeln */
+
+/* Verwendet jetzt die allgemeinen .panel-header Regeln */
+
+/* Verwendet jetzt die allgemeinen Marker-Regeln */
+
+/* Verwendet jetzt die allgemeinen Dropdown-Arrow-Regeln */
+
+/* Verwendet jetzt die allgemeinen .panel-container Regeln */
+
+/* Verwendet jetzt die allgemeinen .accordion-item Regeln */
+
+/* Verwendet jetzt die allgemeinen Checkbox-Regeln */
+
+/* Verwendet jetzt die allgemeinen Text-Regeln */
+
+/* Verwendet jetzt die allgemeinen Empty-State-Regeln */
+
+/* Verwendet jetzt die allgemeinen Button-Container-Regeln */
+
+/* Verwendet jetzt die allgemeinen .panel-container Regeln */
+
+/* Verwendet jetzt die allgemeinen Empty-State-Regeln */
+
+/* Verwendet jetzt die allgemeinen .accordion-item Regeln */
+
+/* Verwendet jetzt die allgemeinen Item-Container-Regeln */
+
+/* Verwendet jetzt die allgemeinen .danger-action-button Regeln */
+
+/* Verwendet jetzt die allgemeinen Button-Container-Regeln */
+
+/* === MEHRSILBIGE REIM-ERGEBNISSE === */
+.multi-rhyme-results {
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border-color);
+}
+
+.multi-rhyme-output h4 {
+    font-family: var(--font-heading);
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-color);
+    margin-bottom: 1rem;
+}
+
+.multi-rhyme-item {
+    background: var(--panel-background);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    transition: all 0.2s ease;
+}
+
+.multi-rhyme-item:hover {
+    border-color: var(--primary-accent);
+    background: rgba(56, 139, 253, 0.05);
+}
+
+.rhyme-line {
+    font-size: 1rem;
+    color: var(--text-color);
+    margin-bottom: 0.5rem;
+    line-height: 1.4;
+}
+
+.rhyme-line strong {
+    color: var(--primary-accent);
+    font-weight: 600;
+}
+
+.rhyme-explanation {
+    font-size: 0.9rem;
+    color: var(--subtle-text-color);
+    font-style: italic;
+    padding-top: 0.5rem;
+    border-top: 1px solid rgba(48, 54, 61, 0.3);
+}
+
+/* Verwendet jetzt die allgemeinen .secondary-action-button Regeln */
 .grouped-item-container {
     margin-bottom: 1.5rem;
 }
@@ -369,13 +1112,9 @@ textarea { min-height: 120px; resize: vertical; }
     color: var(--subtle-text-color);
     font-family: var(--font-heading);
     margin-bottom: 0.75rem;
-    font-size: 1rem;
+    font-size: 1.25rem;
 }
-.simple-item-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-}
+/* .simple-item-list Regel entfernt - wird durch die allgemeine .item-list-container Regel ersetzt */
 .simple-library-item {
     display: flex;
     justify-content: space-between;
@@ -385,21 +1124,33 @@ textarea { min-height: 120px; resize: vertical; }
     border-radius: 6px;
     border: 1px solid var(--border-color);
 }
+
 /* === STYLES FÜR DEN KI-TRAINER CHAT === */
+
+.chat-section {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 400px;
+}
 
 .chat-container {
     display: flex;
     flex-direction: column;
     height: 100%;
+    flex-grow: 1;
 }
 
 .chat-messages {
     flex-grow: 1;
     overflow-y: auto;
-    padding: 10px;
+    padding: 1rem;
     display: flex;
     flex-direction: column;
     gap: 15px; /* Abstand zwischen den Nachrichten */
+    background-color: var(--panel-background-solid);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
 }
 
 .chat-bubble {
@@ -444,6 +1195,76 @@ textarea { min-height: 120px; resize: vertical; }
     color: #a0aec0;
 }
 
+/* === CHAT INPUT BEREICH === */
+.chat-input-area {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    border-top: 1px solid var(--border-color);
+    background-color: var(--panel-background-solid);
+    border-radius: 0 0 8px 8px;
+    min-height: 80px;
+    flex-shrink: 0;
+}
+
+.chat-input-area textarea {
+    flex-grow: 1;
+    min-height: 60px;
+    max-height: 120px;
+    resize: vertical;
+    background-color: var(--background-color);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    color: var(--text-color);
+    padding: 0.75rem;
+    font-size: 0.95rem;
+    font-family: inherit;
+    line-height: 1.4;
+}
+
+.chat-input-area textarea:focus {
+    outline: none;
+    border-color: var(--primary-accent);
+    box-shadow: 0 0 0 2px rgba(56, 139, 253, 0.2);
+}
+
+.chat-input-area textarea:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Spezielle Styles für den Chat-Senden-Button */
+.chat-send-button {
+    height: 60px;
+    min-width: 120px;
+    padding: 0 1.5rem;
+    flex-shrink: 0;
+    align-self: flex-start; /* KORREKTUR: Erzwingt Linksbündigkeit */
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 500;
+}
+
+/* Container für relative Positionierung des Buttons */
+.chat-input-area {
+    position: relative;
+}
+
+.chat-send-button:disabled {
+    background-color: var(--subtle-text-color);
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+.chat-send-button:not(:disabled):hover {
+    background-color: var(--primary-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(56, 139, 253, 0.3);
+}
+
 /* === STYLES FÜR DEN "KI TIPP..." INDIKATOR === */
 
 .typing-indicator {
@@ -478,4 +1299,1217 @@ textarea { min-height: 120px; resize: vertical; }
     40% {
         transform: scale(1.0);
     }
+}
+
+/* === DYNAMISCHE LADEANIMATION === */
+.analysis-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(5px);
+}
+
+.analysis-container {
+    background: var(--panel-bg);
+    border: 2px solid var(--primary-accent);
+    border-radius: 20px;
+    padding: 3rem;
+    text-align: center;
+    max-width: 500px;
+    width: 90%;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+}
+
+.analysis-title {
+    color: var(--primary-accent);
+    font-size: 1.5rem;
+    font-weight: bold;
+    margin-bottom: 2rem;
+    text-shadow: 0 0 10px var(--primary-accent);
+}
+
+.analysis-step {
+    color: var(--text-primary);
+    font-size: 1.1rem;
+    margin-bottom: 2rem;
+    min-height: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+}
+
+.analysis-step.active {
+    color: var(--primary-accent);
+    font-weight: bold;
+    transform: scale(1.05);
+}
+
+.analysis-progress {
+    width: 100%;
+    height: 8px;
+    background: var(--border-color);
+    border-radius: 4px;
+    overflow: hidden;
+    margin-bottom: 2rem;
+}
+
+.analysis-progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-accent), var(--primary-hover));
+    border-radius: 4px;
+    transition: width 0.5s ease;
+    box-shadow: 0 0 10px var(--primary-accent);
+}
+
+.analysis-spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid var(--border-color);
+    border-top: 4px solid var(--primary-accent);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 1rem;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.analysis-step-indicator {
+    display: flex;
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+.step-dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--border-color);
+    transition: all 0.3s ease;
+}
+
+.step-dot.active {
+    background: var(--primary-accent);
+    transform: scale(1.2);
+    box-shadow: 0 0 10px var(--primary-accent);
+}
+
+.step-dot.completed {
+    background: var(--success-color);
+    transform: scale(1.1);
+}
+
+/* === RESPONSIVE DESIGN === */
+@media (max-width: 768px) {
+    .main-action-container {
+        flex-direction: column;
+        /* gap entfernt - wird jetzt durch .v-stack gesteuert */
+    }
+    
+    .main-action-button,
+    .secondary-action-button {
+        width: 100%;
+        min-width: auto;
+    }
+    
+    .action-button {
+        min-width: 70px;
+        font-size: 0.8rem;
+        padding: 0.4rem 0.8rem;
+        height: 32px; /* Kleinere Höhe für mobile Geräte */
+    }
+    
+    .modal-actions {
+        flex-direction: column;
+    }
+    
+    .modal-actions .main-action-button,
+    .modal-actions .secondary-action-button {
+        width: 100%;
+    }
+}
+
+/* === UNIVERSELLE APP-STYLING-DATEI === */
+/* Wendet das schöne Design auf alle Bereiche der App an */
+
+/* === GLOBALE STYLES === */
+.app-layout {
+    font-family: 'Inter', sans-serif;
+}
+
+/* === SECTION HEADERS (für alle Bereiche) === */
+.section-header {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: var(--spacing-sm);
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, rgba(255, 255, 255, 0.02) 100%);
+    border-radius: 10px;
+    
+    
+}
+
+.header-icon {
+    font-size: 20px;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.header-content h3 {
+    margin: 0 0 6px 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: #ffffff;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.header-content p {
+    margin: 0;
+    color: #b0b0b0;
+    line-height: 1.4;
+    font-size: 13px;
+}
+
+/* === INPUT FELDER (für alle Bereiche) === */
+.input-group {
+    position: relative;
+}
+
+.main-input, .text-input, .style-input, .technique-input, .lyric-input {
+    width: 100%;
+    padding: 14px 18px;
+    font-size: 15px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 2px solid rgba(255, 255, 255, 0.15);
+    border-radius: 10px;
+    color: #ffffff;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    font-family: 'Inter', sans-serif;
+    line-height: 1.5;
+    height: 36px;                    /* Feste Höhe für Einheitlichkeit */
+    box-sizing: border-box;          /* Padding und Border in Höhe einrechnen */
+}
+
+.main-input:focus, .text-input:focus, .style-input:focus, .technique-input:focus, .lyric-input:focus {
+    outline: none;
+    border-color: #4a9eff;
+    background: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 0 0 4px rgba(74, 158, 255, 0.1), 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+.main-input::placeholder, .text-input::placeholder, .style-input::placeholder, .technique-input::placeholder, .lyric-input::placeholder {
+    color: #808080;
+    font-style: italic;
+}
+
+/* === TEXTAREA FELDER === */
+.textarea-input, .lyric-textarea {
+    width: 100%;
+    min-height: 80px;
+    max-height: 200px;
+    padding: 14px 18px;
+    font-size: 15px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 2px solid rgba(255, 255, 255, 0.15);
+    border-radius: 10px;
+    color: #ffffff;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    font-family: 'Inter', sans-serif;
+    resize: vertical;
+    line-height: 1.5;
+}
+
+.textarea-input:focus, .lyric-textarea:focus {
+    outline: none;
+    border-color: #4a9eff;
+    background: rgba(255, 255, 255, 0.12);
+    box-shadow: 0 0 0 4px rgba(74, 158, 255, 0.1), 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+/* === BUTTONS (für alle Bereiche) === */
+/* Verwendung der einheitlichen Button-Klassen für alle Bereiche */
+.primary-button, .generate-button, .save-button, .analyze-button {
+    /* Diese Buttons verwenden die .main-action-button Klasse */
+    /* Alle Styling-Regeln sind bereits in .main-action-button definiert */
+}
+
+/* === STATUS-NACHRICHTEN === */
+.status-message {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    max-width: 400px;
+    padding: 12px 20px;
+    border-radius: 8px;
+    color: #ffffff;
+    font-weight: 500;
+    font-size: 14px;
+    line-height: 1.4;
+    z-index: 1001;
+    animation: slideIn 0.3s ease;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+.status-message.success { 
+    background: rgba(76, 175, 80, 0.95); 
+    border: 1px solid rgba(76, 175, 80, 0.3); 
+}
+
+.status-message.error { 
+    background: rgba(244, 67, 54, 0.95); 
+    border: 1px solid rgba(244, 67, 54, 0.3); 
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+@media (max-width: 768px) {
+    .status-message {
+        right: 10px;
+        left: 10px;
+        max-width: none;
+    }
+}
+
+@media (max-width: 480px) {
+    .status-message {
+        top: 10px;
+        right: 5px;
+        left: 5px;
+        font-size: 13px;
+        padding: 10px 16px;
+    }
+}
+
+/* === AKKORDEON-STYLING === */
+.accordion-item {
+    margin-bottom: var(--spacing-sm); /* <-- REGEL WIEDER HINZUFÜGEN (z.B. 1rem) */
+}
+
+.accordion-item:last-child {
+    margin-bottom: 0;
+}
+
+.accordion-header {
+    cursor: pointer;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: all 0.3s ease;
+}
+
+.accordion-header:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.accordion-content {
+    padding: 16px;
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    border-top: none;
+    border-radius: 0 0 8px 8px;
+}
+
+.accordion-icon {
+    transition: transform 0.3s ease;
+}
+
+.accordion-icon.open {
+    transform: rotate(180deg);
+}
+
+/* === FACET-DELETE-BUTTONS === */
+.facet-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+
+.facet-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.action-button.delete-facet {
+    padding: 4px;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: transparent;
+    border: none;
+    color: #888;
+}
+
+.action-button.delete-facet:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: #fff;
+}
+
+.action-button.delete-facet svg {
+    width: 16px;
+    height: 16px;
+}
+
+/* === FINALE, ALLGEMEINE ABSTANDSREGEL FÜR ALLE SEITEN === */
+/* .content-block + .content-block Regel entfernt - wird jetzt durch .v-stack gap gesteuert */
+
+/* === ALLGEMEINES STYLING FÜR TAGS / PILLS === */
+
+/* Der Container, der alle Tags umhüllt */
+.tag-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: var(--component-padding);
+    background-color: var(--panel-background-solid);
+    border-radius: var(--button-border-radius);
+    border: 1px solid var(--border-color);
+    min-height: 50px;
+}
+
+/* Das Styling für ein einzelnes Tag */
+.tag-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background-color: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    padding: 6px 12px;
+    border-radius: 16px; /* Macht es pillenförmig */
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.tag-item:hover {
+    border-color: var(--primary-accent);
+    background-color: rgba(56, 139, 253, 0.1);
+}
+
+/* Der Textinhalt innerhalb des Tags */
+.tag-content {
+    white-space: nowrap;
+}
+
+/* Der "X"-Button zum Entfernen */
+.tag-remove-btn {
+    background: none;
+    border: none;
+    color: var(--subtle-text-color);
+    cursor: pointer;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    width: 18px;
+    height: 18px;
+    transition: all 0.2s ease;
+}
+
+.tag-remove-btn:hover {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: var(--text-color);
+}
+
+.tag-remove-btn svg {
+    width: 14px;
+    height: 14px;
+}
+
+/* === BIBLIOTHEK STYLING-VERBESSERUNG === */
+.grouped-item-container {
+    margin-bottom: var(--spacing-md);
+}
+
+.grouped-item-container:last-child {
+    margin-bottom: 0;
+}
+
+/* === STIL-SYNTHESE & CLUSTER-ANSICHT === */
+.library-controls {
+    display: flex;
+    gap: var(--spacing-sm);
+    margin-bottom: var(--spacing-lg);
+    padding: var(--spacing-md);
+    background: var(--panel-background-solid);
+    border-radius: var(--button-border-radius);
+    border: 1px solid var(--border-color);
+    align-items: center;
+    justify-content: center;
+}
+
+.loading-bar-small {
+    width: 200px;
+    height: 4px;
+    background: var(--border-color);
+    border-radius: 2px;
+    overflow: hidden;
+    position: relative;
+}
+
+.loading-progress {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary-accent), var(--primary-hover));
+    border-radius: 2px;
+    animation: loading-progress 2s ease-in-out infinite;
+}
+
+@keyframes loading-progress {
+    0% { width: 0%; }
+    50% { width: 70%; }
+    100% { width: 100%; }
+}
+
+/* .style-cluster-container Regel entfernt - wird durch die allgemeine .item-list-container Regel ersetzt */
+
+.category-tag {
+    background: rgba(74, 158, 255, 0.2);
+    color: var(--primary-accent);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    border-radius: var(--button-border-radius);
+    font-size: 0.75rem;
+    font-weight: 500;
+    margin-left: var(--spacing-sm);
+    border: 1px solid rgba(74, 158, 255, 0.3);
+}
+
+/* === DROPDOWN-STYLING REFAKTORISIERT === */
+/* Alle Dropdowns verwenden jetzt die einheitliche Regel aus der allgemeinen select-Regel */
+/* Spezifische Regeln wurden entfernt für eine saubere, globale Lösung */
+
+/* Verwendet jetzt die allgemeinen Abstands-Regeln */
+
+/* === REIMZEILEN-GENERATOR STYLING === */
+
+.header-icon {
+    font-size: 2rem;
+    line-height: 1;
+    flex-shrink: 0;
+    color: var(--text-color);
+}
+
+.header-content h3 {
+    margin: 0 0 var(--spacing-sm) 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.header-content p {
+    margin: 0;
+    color: var(--subtle-text-color);
+    line-height: 1.5;
+    font-size: 0.875rem;
+}
+
+/* Input Section - Verwendet jetzt allgemeine CSS-Variablen */
+.rhyme-line-input {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-lg);
+    margin-bottom: var(--spacing-xl);
+}
+
+.rhyme-line-input-options {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-md) var(--spacing-lg);
+    background: var(--panel-background-solid);
+    border-radius: var(--button-border-radius);
+    border: 1px solid var(--border-color);
+}
+
+.option-group {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-sm);
+}
+
+.option-label {
+    color: var(--subtle-text-color);
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+
+
+/* Button Container - Verwendet jetzt die allgemeine .button-container Regel */
+
+/* Results Section - Verwendet jetzt allgemeine CSS-Variablen */
+.rhyme-line-results {
+    /* margin-top entfernt - wird jetzt durch .v-stack gap gesteuert */
+}
+
+/* Loading State - Verwendet jetzt allgemeine CSS-Variablen */
+.loading-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--spacing-lg);
+    padding: var(--spacing-xl) var(--spacing-lg);
+    background: var(--panel-background-solid);
+    border-radius: var(--button-border-radius);
+    border: 1px solid var(--border-color);
+}
+
+.typing-indicator {
+    display: flex;
+    gap: 8px;
+}
+
+.typing-dot {
+    width: 12px;
+    height: 12px;
+    background: #4a9eff;
+    border-radius: 50%;
+    animation: typing-bounce 1.4s infinite ease-in-out;
+}
+
+.typing-dot:nth-child(1) { animation-delay: -0.32s; }
+.typing-dot:nth-child(2) { animation-delay: -0.16s; }
+
+@keyframes typing-bounce {
+    0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; }
+    40% { transform: scale(1); opacity: 1; }
+}
+
+.loading-text {
+    color: #b0b0b0;
+    font-size: 16px;
+    font-weight: 500;
+    margin: 0;
+}
+
+/* Results Output - Verwendet jetzt allgemeine CSS-Variablen */
+.rhyme-line-output {
+    background: var(--panel-background-solid);
+    border-radius: var(--button-border-radius);
+    border: 1px solid var(--border-color);
+    overflow: hidden;
+}
+
+.results-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--spacing-lg) var(--spacing-xl);
+    background: var(--panel-background-solid);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.results-header h4 {
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.results-count {
+    background: rgba(74, 158, 255, 0.2);
+    color: var(--primary-accent);
+    padding: var(--spacing-xs) var(--spacing-md);
+    border-radius: var(--button-border-radius);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Results Grid - Verwendet jetzt allgemeine CSS-Variablen */
+.results-grid {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-md);
+    padding: var(--spacing-xl);
+}
+
+.rhyme-line-item {
+    background: var(--panel-background-solid);
+    border: 1px solid var(--border-color);
+    border-radius: var(--button-border-radius);
+    padding: var(--spacing-lg);
+    transition: all 0.3s ease;
+}
+
+.rhyme-line-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.15);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.rhyme-line-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+
+.line-number {
+    background: rgba(74, 158, 255, 0.15);
+    color: var(--primary-accent);
+    padding: var(--spacing-xs) var(--spacing-md);
+    border-radius: var(--button-border-radius);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.line-actions {
+    display: flex;
+    gap: var(--spacing-sm);
+}
+
+.action-btn {
+    background: none;
+    border: none;
+    color: var(--subtle-text-color);
+    cursor: pointer;
+    padding: var(--spacing-xs);
+    border-radius: var(--button-border-radius);
+    transition: all 0.2s ease;
+    font-size: 1rem;
+}
+
+.action-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-color);
+}
+
+.copy-btn:hover {
+    color: var(--primary-accent);
+}
+
+/* Line Content */
+.rhyme-line-content {
+    font-size: 18px;
+    line-height: 1.6;
+    color: #ffffff;
+    margin-bottom: 16px;
+    padding: 16px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    border-left: 4px solid #4a9eff;
+}
+
+/* Explanation */
+.rhyme-line-explanation {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #b0b0b0;
+    font-size: 14px;
+    padding: 12px 16px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.explanation-icon {
+    font-size: 16px;
+    opacity: 0.8;
+}
+
+/* Empty State */
+.empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 60px 20px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 12px;
+    border: 2px dashed rgba(255, 255, 255, 0.1);
+    text-align: center;
+}
+
+.empty-icon {
+    font-size: 48px;
+    opacity: 0.6;
+}
+
+.empty-text {
+    color: #b0b0b0;
+    font-size: 18px;
+    font-weight: 500;
+    margin: 0;
+}
+
+.empty-hint {
+    color: #808080;
+    font-size: 14px;
+    margin: 0;
+    font-style: italic;
+}
+
+/* Dark Theme Enhancements */
+.rhyme-line-item:nth-child(even) {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.rhyme-line-item:nth-child(odd) {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+/* Smooth Transitions */
+*:not(.loading-overlay-central) {
+    transition: background-color 0.3s ease, border-color 0.3s ease, transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+/* Focus States */
+.main-input:focus,
+.number-input:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(74, 158, 255, 0.3);
+}
+
+/* Hover Effects */
+.rhyme-line-item:hover .line-number {
+    background: rgba(74, 158, 255, 0.25);
+    color: #5ba8ff;
+}
+
+.rhyme-line-item:hover .rhyme-line-content {
+    border-left-color: #5ba8ff;
+    background: rgba(0, 0, 0, 0.25);
+}
+
+/* Responsive Design für Reim-Generator */
+@media (max-width: 768px) {
+    .header-icon {
+        font-size: 28px;
+    }
+    
+    .rhyme-line-input-options {
+        flex-direction: column;
+        gap: 16px;
+        align-items: stretch;
+    }
+    
+    .option-group {
+        justify-content: center;
+    }
+    
+    .results-header {
+        flex-direction: column;
+        gap: 12px;
+        text-align: center;
+    }
+    
+    .rhyme-line-header {
+        flex-direction: column;
+        gap: 12px;
+        align-items: flex-start;
+    }
+    
+    .main-input {
+        font-size: 14px;
+        padding: 14px 16px;
+    }
+    
+    .main-action-button {
+        padding: 12px 20px; /* Angepasst für mobile Geräte */
+        font-size: 13px;
+        height: 40px; /* Kleinere Höhe für mobile Geräte */
+    }
+}
+
+/* === KÜNSTLER-DNA SEITE === */
+/* Verwendet jetzt alle allgemeinen Regeln der anderen Seiten */
+/* Keine speziellen Regeln mehr erforderlich */
+
+/* Allgemeine Layout-Regel für vertikale Listen mit Abstand */
+.item-list-container {
+  display: flex;
+  flex-direction: column;
+  /* gap entfernt - wird jetzt durch .v-stack gesteuert */
+}
+
+/* === FINALE, ALLGEMEINE REGEL FÜR ALLE CHECKBOX-BESCHRIFTUNGEN === */
+
+.checkbox-label {
+    /* * WICHTIG: inline-flex sorgt dafür, dass sich das Label wie Text verhält 
+     * und nur so viel Platz einnimmt wie nötig. Perfekt für das Modal.
+    */
+    display: inline-flex; 
+    align-items: center;    /* Stellt die vertikale Zentrierung sicher */
+    gap: 0.75rem;           /* Sorgt für einen konsistenten Abstand */
+    padding: 0.5rem;        /* Definiert die klickbare Fläche und den Hover-Bereich */
+    border-radius: 4px;
+    transition: background-color 0.2s ease;
+    cursor: pointer;
+}
+
+/* * Ein optionaler Hover-Effekt, den jetzt alle Checkboxen automatisch bekommen.
+ * Der Hover-Effekt aus dem Dropdown gilt jetzt also auch im Modal.
+*/
+.checkbox-label:hover {
+    background-color: rgba(56, 139, 253, 0.1);
+}
+
+/* === STYLING FÜR CUSTOM DROPDOWN === */
+.custom-dropdown {
+  position: relative;
+  width: 100%;
+}
+
+.dropdown-toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 10px 12px;
+  background-color: #FFFFFF14;
+  color: #f0f0f0;
+  border: 1px solid #444;
+  border-radius: 6px;
+  font-size: 1rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dropdown-toggle:hover {
+  border-color: #666;
+}
+
+.dropdown-chevron {
+  transition: transform 0.2s ease-in-out;
+}
+
+.dropdown-chevron.open {
+  transform: rotate(180deg);
+}
+
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px); /* Kleiner Abstand zur Box */
+  left: 0;
+  right: 0;
+  background-color: var(--panel-background-solid); /* Solider, dunkler Hintergrund */
+  border: 1px solid var(--border-color); /* Konsistente Border-Farbe */
+  border-radius: 6px;
+  list-style: none;
+  padding: 0.5rem;
+  margin: 0;
+  z-index: 10; /* Stellt sicher, dass es über anderen Elementen liegt */
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.dropdown-item button {
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text-color); /* Stellt sicher, dass der Text lesbar ist */
+  padding: 0.75rem 1rem;
+  text-align: left;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 1rem;
+}
+
+.dropdown-item button:hover {
+  background-color: var(--primary-accent);
+  color: white;
+}
+
+/* === STYLING FÜR MULTI-SELECT DROPDOWN === */
+.multi-select-item {
+  padding: 0.25rem 0.5rem;
+}
+
+
+
+
+
+/* === STYLING FÜR DAS RHYME-MODAL === */
+.rhyme-modal-results {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.rhyme-result-button {
+  background-color: var(--panel-background-solid);
+  border: 1px solid var(--border-color);
+  color: var(--text-color);
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.rhyme-result-button:hover {
+  background-color: var(--primary-accent);
+  border-color: var(--primary-accent);
+  color: white;
+}
+
+.error-message {
+  color: var(--danger-color);
+}
+
+/* === STYLING FÜR DIE GENERIERTE SONG-AUSGABE === */
+.generated-song-output {
+    background-color: var(--panel-background-solid);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 1rem;
+    min-height: 200px;
+    white-space: pre-wrap; /* Behält Formatierung bei */
+    font-family: monospace;
+    cursor: text;
+}
+
+.generated-song-actions {
+    justify-content: flex-end; /* Richtet Buttons rechts aus */
+}
+
+/* === STYLING FÜR NORMALE HTML SELECT-ELEMENTE === */
+select.form-input-field {
+  background-color: var(--panel-background-solid);
+  border: 1px solid var(--border-color);
+  color: var(--text-color);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  font-size: 1rem;
+  cursor: pointer;
+  height: 36px; /* Einheitliche Höhe - angepasst an form-grid */
+  box-sizing: border-box; /* Konsistentes Box-Model */
+}
+
+select.form-input-field:hover {
+  border-color: var(--primary-accent);
+}
+
+select.form-input-field:focus {
+  outline: none;
+  border-color: var(--primary-accent);
+  box-shadow: 0 0 0 2px rgba(56, 139, 253, 0.2);
+}
+
+/* Styling für die Dropdown-Optionen */
+select.form-input-field option {
+  background-color: var(--panel-background-solid);
+  color: var(--text-color);
+  padding: 0.5rem;
+}
+
+select.form-input-field option:hover {
+  background-color: var(--primary-accent);
+  color: white;
+}
+
+/* === STYLING FÜR KLEINE ZAHLEN-EINGABEFELDER === */
+.number-input-small {
+  width: 80px;
+  min-width: 80px;
+  text-align: center;
+  /* Stellt sicher, dass die allgemeinen Input-Stile übernommen werden */
+  background-color: #FFFFFF14;
+  border: 1px solid var(--border-color);
+  color: var(--text-color);
+  border-radius: 6px;
+  padding: 0.75rem;
+}
+
+/* === STYLING FÜR DNA-REIM-VERWALTUNG === */
+.dna-actions, .dna-filter-section {
+    display: flex;
+    gap: var(--spacing-sm); /* Standard-Abstand (1rem) zwischen Elementen */
+    align-items: center;
+    justify-content: flex-start; /* Linksbündigkeit */
+    /* gap für Container-Abstände wird durch .v-stack gesteuert */
+}
+
+.dna-filter-section input {
+    flex-grow: 1;
+}
+
+/* === LOADING OVERLAY KOMPONENTE === */
+.loading-overlay-central {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(5px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    z-index: 9999; /* Höchster z-index - überlagert alles andere */
+    color: white;
+    font-size: 1.2rem;
+    animation: fadeIn 0.2s ease; /* Eigener Fade-In */
+}
+
+.loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid var(--border-color);
+    border-top: 4px solid var(--primary-accent);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Fade-In Animation für das LoadingOverlay */
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* === STYLING FÜR DEN NEUEN, RUNDEN ICON-BUTTON IM CHAT === */
+.chat-send-button.icon-button {
+    min-width: 0; /* Setzt die Mindestbreite zurück */
+    width: 50px;  /* Feste Breite */
+    height: 50px; /* Feste Höhe */
+    padding: 0;   /* Entfernt den Innenabstand */
+    border-radius: 50%; /* Macht den Button komplett rund */
+    justify-content: center; /* Zentriert das Icon horizontal */
+    align-self: center; /* Zentriert den Button vertikal zur Textarea */
+}
+
+/* Passt die Größe des Icons innerhalb des Buttons an */
+.chat-send-button.icon-button svg {
+    width: 22px;
+    height: 22px;
+}
+
+/* === STYLING FÜR DEN RECORD-BUTTON WÄHREND DER AUFNAHME === */
+/* Styling für den Record-Button, WÄHREND eine Aufnahme läuft */
+.record-button.recording .record-dot {
+    animation: pulse 1.5s infinite ease-in-out;
+    box-shadow: 0 0 10px var(--record-color);
+}
+
+/* Keyframe-Animation für den pulsierenden Effekt */
+@keyframes pulse {
+    0% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: scale(1.2);
+        opacity: 0.7;
+    }
+    100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+/* === STYLING FÜR DIE NEUEN REIM-ERGEBNISSE === */
+.rhyme-result-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: 1rem;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background-color: rgba(255, 255, 255, 0.02);
+    transition: all 0.2s ease;
+}
+
+.rhyme-result-item:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+    border-color: var(--primary-accent);
+}
+
+.rhyme-content {
+    flex: 1;
+    min-width: 0; /* Verhindert Überlauf */
+}
+
+.rhyme-content h4 {
+    margin: 0 0 0.5rem 0;
+    color: var(--primary-accent);
+    font-size: 1.1rem;
+}
+
+.rhyme-content p {
+    margin: 0;
+    color: var(--subtle-text-color);
+    font-size: 0.9rem;
+    line-height: 1.4;
+}
+
+.rhyme-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-shrink: 0; /* Verhindert Schrumpfen */
+}
+
+.save-status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background-color: rgba(34, 197, 94, 0.2);
+    color: #22c55e;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+    border-radius: 6px;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.add-rhyme-btn {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.85rem;
+    background-color: var(--primary-accent);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.add-rhyme-btn:hover {
+    background-color: var(--primary-hover);
+    transform: translateY(-1px);
 }
