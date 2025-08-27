@@ -103,12 +103,6 @@ try:
 except Exception:
     _zipf = None
 
-# Optionales Deutsch-Lexikon (falls installiert). Fallback-Heuristiken greifen sonst.
-try:
-    from wordfreq import zipf_frequency as _zipf
-except Exception:
-    _zipf = None
-
 # === ZENTRALE KI-AUFRUF-FUNKTION ===
 def call_ai_model(task_type: str, prompt: Union[str, list], schema: dict = None, is_json_output: bool = True):
     """
@@ -528,20 +522,22 @@ def rhyme_signature_fine(word: str) -> str:
     z.B. '...schwanz' vs. '...kranz' vs. '...tanz' getrennt.
     """
     w = (word or "").strip().lower()
-    cl, _after = last_stressed_vowel_cluster(w)
-    if not cl:
-        return w
-    # Index des letzten Vokalclusters (Kern)
-    idx = w.rfind(cl)
-    # Onset direkt vor dem Kern: rückwärts solange Buchstaben & KEIN Vokal
-    onset_start = idx
-    vowels = set("aeiouäöüy")
-    while onset_start > 0 and w[onset_start-1].isalpha() and w[onset_start-1] not in vowels:
-        onset_start -= 1
-    segment = w[onset_start:]  # komplette letzte Silbe (orthografisch)
-    fam = _vowel_family(cl)
+    if not w:
+        return ""
+    
+    # NEU: letzte Vokalgruppe + Endkoda sauber ziehen
+    m = re.search(r'([^aeiouäöüy]*)([aeiouäöüy]+)([^aeiouäöüy]*)$', w)
+    if not m:
+        return ""
+    onset  = m.group(1) or ""
+    nucleus = m.group(2)
+    coda    = m.group(3) or ""
+    
+    # Vokalfamilie normalisieren
+    fam = _vowel_family(nucleus)
+    
     # leichte Normalisierung
-    segment = segment.replace("ß", "ss")
+    segment = (onset + coda).replace("ß", "ss")
     return f"{fam}|{segment}"
 # === ENDE NEU ===
 
@@ -1174,7 +1170,7 @@ def find_rhymes_endpoint():
         phrase_only_needed = bool(data.get('phrase_only', False))  # NEU: Nur Phrasen generieren
 
         # Nutzer-Parameter / Defaults
-        TARGET_PHRASE_RATIO = float(data.get('target_phrase_ratio', 0.50))
+        TARGET_PHRASE_RATIO = float(data.get('target_phrase_ratio', 0.30))
         MAX_PER_FAMILY     = int(data.get('max_per_family', 2))
         MAX_RESULTS        = int(data.get('max_results', 12))
 
@@ -1378,6 +1374,12 @@ def find_rhymes_endpoint():
             if len(valid_candidates) < N_MIN:
                 logger.info(f"/api/rhymes: Nur {len(valid_candidates)} Treffer – starte Second Pass (Reject-Sampling).")
 
+                # --- NEU: Falls zu wenig Phrasen, Pass 2 auf "nur Phrasen" stellen ---
+                need_phrases = (not phrase_only_needed) and (TARGET_PHRASE_RATIO > 0.0)
+                current_phrases = sum(1 for x in valid_candidates if ' ' in x)  # 'valid_candidates' = Liste nach Pass 1
+                need_phrase_only_mode = need_phrases and (current_phrases < int(round(TARGET_PHRASE_RATIO * MAX_RESULTS)))
+                logger.info(f"/api/rhymes Second Pass mode: {'phrases-only' if need_phrase_only_mode else 'mixed'} (current_phrases={current_phrases})")
+
                 # Bisherige Reimfamilien (für Blacklist) + benutzte Wörter
                 banned_families = sorted(seen_signatures.keys())  # z.B. ['a|te', 'i|nd', ...]
                 banned_words = sorted({vc.lower() for vc in valid_candidates})
@@ -1404,8 +1406,8 @@ def find_rhymes_endpoint():
                     'ANTWORTFORMAT: Nur JSON-Objekt {"candidates": ["..."]}\n'
                 )
 
-                # Dynamische Phrasen-Anweisung basierend auf phrase_only_needed
-                if phrase_only_needed:
+                # Dynamische Phrasen-Anweisung basierend auf need_phrase_only_mode
+                if need_phrase_only_mode:
                     second_prompt += (
                         "\n- GIB AUSSCHLIESSLICH MEHRWORTPHRASEN (2–5 Wörter).\n"
                         "- KEINE Einwort-Kandidaten.\n"
@@ -1457,8 +1459,8 @@ def find_rhymes_endpoint():
                     line = (raw or "").strip()
                     reason = None  # NEU: Ablehnungsgrund (nur für Debug-Log)
                     
-                    # === NEU: "Nur Phrasen" hart (wenn phrase_only_needed=True) ===
-                    if phrase_only_needed and not re.search(r"\s", line):
+                    # === NEU: "Nur Phrasen" hart (wenn need_phrase_only_mode=True) ===
+                    if need_phrase_only_mode and not re.search(r"\s", line):
                         if debug_mode: rejected_reasons.append((line, "phrase_only"))
                         continue
                     # === ENDE NEU ===
@@ -1683,12 +1685,57 @@ def find_rhymes_endpoint():
                         sel_sgl += singles[len(sel_sgl): len(sel_sgl)+need]
 
                 final_list = (sel_phr + sel_sgl)[:MAX_RESULTS]
-                logger.info(f"/api/rhymes Cap: target={MAX_RESULTS}, chosen={len(final_list)} (phrases={len(sel_phr)}, singles={len(sel_sgl)})")
-                logger.info(f"/api/rhymes Accepted (final {len(final_list)}): {final_list}")
+                
+                # --- NEU: finale Auswahl mit Familienlimit + Phrasenquote (strenger) ---
+                from collections import defaultdict
+
+                pool = valid_candidates  # Liste nach allen Gates
+                family_count = defaultdict(int)
+
+                def fam(x: str) -> str:
+                    return rhyme_signature_fine(x)  # trennt z.B. -kranz/-tanz/-schwanz
+
+                target_phr = 0 if phrase_only_needed else max(0, int(round(TARGET_PHRASE_RATIO * MAX_RESULTS)))
+
+                phr_queue  = [c for c in pool if ' ' in c]
+                sing_queue = [c for c in pool if ' ' not in c]
+
+                chosen = []
+
+                # 1) Phrasen bis Zielquote (mit Familienlimit)
+                for c in list(phr_queue):
+                    if sum(1 for y in chosen if ' ' in y) >= target_phr: break
+                    f = fam(c)
+                    if family_count[f] >= MAX_PER_FAMILY: continue
+                    chosen.append(c); family_count[f] += 1
+                    if len(chosen) >= MAX_RESULTS: break
+
+                # 2) Singles auffüllen (mit Familienlimit)
+                for c in list(sing_queue):
+                    if len(chosen) >= MAX_RESULTS: break
+                    f = fam(c)
+                    if family_count[f] >= MAX_PER_FAMILY: continue
+                    chosen.append(c); family_count[f] += 1
+
+                # 3) Rest ggf. wieder mit Phrasen (mit Familienlimit)
+                if len(chosen) < MAX_RESULTS:
+                    for c in phr_queue:
+                        if len(chosen) >= MAX_RESULTS: break
+                        if c in chosen: continue
+                        f = fam(c)
+                        if family_count[f] >= MAX_PER_FAMILY: continue
+                        chosen.append(c); family_count[f] += 1
+
+                phr_ct = sum(1 for x in chosen if ' ' in x)
+                sing_ct = len(chosen) - phr_ct
+                logger.info(f"/api/rhymes Cap (neu): target={MAX_RESULTS}, chosen={len(chosen)} (phrases={phr_ct}, singles={sing_ct}), max_per_family={MAX_PER_FAMILY}, target_phrase_ratio={TARGET_PHRASE_RATIO}")
+                
+                logger.info(f"/api/rhymes Cap: target={MAX_RESULTS}, chosen={len(chosen)} (phrases={len([x for x in chosen if ' ' in x])}, singles={len([x for x in chosen if ' ' not in x])})")
+                logger.info(f"/api/rhymes Accepted (final {len(chosen)}): {chosen}")
 
                 # Finale Antwort nach dem Second Pass neu erstellen
                 final_rhymes = []
-                for candidate in final_list:
+                for candidate in chosen:
                     final_rhymes.append({"rhyme": candidate})
                 random.shuffle(final_rhymes)
             # === ENDE NEU ===
