@@ -1270,23 +1270,59 @@ def find_rhymes_endpoint():
 
         # Dynamische Phrasenquote basierend auf TARGET_PHRASE_RATIO
         target_phrase_pct = int(TARGET_PHRASE_RATIO * 100)
+        target_phrase_ratio = float(TARGET_PHRASE_RATIO)
         phrase_rule = (f"6) Mindestens {target_phrase_pct}% Mehrwortphrasen (2–5 Wörter); Rest echte Einwort-Wörter/Komposita."
                        if TARGET_PHRASE_RATIO < 0.5
                        else "6) Bevorzuge Mehrwortphrasen (2–5 Wörter).")
 
-        creative_prompt = (
-            f"Erzeuge 40 Reimkandidaten für '{input_word}'.\n"
-            "Regeln (streng, nur das beachten):\n"
-            "1) Gib NUR JSON zurück: {\"candidates\": [\"...\"]}\n"
-            f"2) EXAKT {base_syllables} Silben pro Kandidat.\n"
-            f"3) Sichtbares End-Suffix = '{base_schwa}'.\n"
-            f"4) Erster Vokal (Familie) = '{first_vowel_family}'.\n"
-            f"5) Reimkern (letzter betonter Vokal): gleiche Familie und gleiche Längenklasse/Diphthong ('{len_class}').\n"
-            "   Vermeide Serien gleicher Präfixe (z. B. viele 'ab...' nacheinander).\n"
-            f"{phrase_rule}\n"
-            "7) Keine Fantasieformen, keine Eigennamen. Benutze nur echte deutsche Wörter oder sehr plausible Komposita.\n"
-            "8) Varianz: nicht zu viele gleiche Endungen.\n"
+        # --- NEU: Prompt-Variablen aus deiner Phonetik-Analyse (alles generisch) ---
+        # Falls ein Feld in target_analysis mal fehlt, greifen sinnvolle Defaults.
+        first_vowel_family  = target_analysis.get("first_vowel_family", "")
+        first_vowel_length  = target_analysis.get("first_vowel_length", len_class)  # z.B. "short"/"long"
+        last_vowel_family   = target_analysis.get("last_vowel_family", "")
+        last_vowel_length   = target_analysis.get("last_vowel_length", len_class)
+        last_coda_family_hint = target_analysis.get(
+            "last_coda_family_hint",
+            "ähnliche Koda-Struktur (gleiche Artikulationsstelle; stimmhaft/stimmlos Variante ok)"
         )
+
+        core_vowel_family   = target_analysis.get("core_vowel_family")
+        core_vowel_length   = target_analysis.get("core_vowel_length")
+
+        if core_vowel_family:
+            core_rule       = f"Zwischen erstem und letztem Vokal muss **genau einmal** ein betonter Vokal der Familie {core_vowel_family} (Länge={core_vowel_length}) auftreten."
+            core_rule_hint  = "Dieser Kern liegt syllabisch vor der letzten Silbe."
+            core_selfcheck  = f"den inneren betonten {core_vowel_family}-Kern nicht enthält"
+        else:
+            core_rule       = "Kein zusätzlicher innerer Kern erforderlich."
+            core_rule_hint  = ""
+            core_selfcheck  = "False"   # Platzhalter -> fällt im Prompt als Bedingung faktisch weg
+
+        creative_prompt = f"""
+Du bist ein deutscher Reim-Coach. Erzeuge starke, natürliche Reimkandidaten für „{input_word}".
+
+REGELN (unbedingt einhalten):
+1) **Ausgabeform**: Gib **nur JSON** zurück: {{"candidates":["...","..."]}}. Keine Erklärungen, keine Gedanken, nichts davor oder danach.
+2) **Silbenzahl**: Jeder Kandidat hat **genau {base_syllables} Silben**.
+3) **Vokal-Anker (Familie/Längenklasse)**:
+   - **Erster Vokal**: Familie={first_vowel_family}, Länge={first_vowel_length} – muss übereinstimmen.
+   - **Letzter Vokal**: Familie={last_vowel_family}, Länge={last_vowel_length} – muss übereinstimmen.
+   - **Innerer betonter Vokal**: {core_rule}
+     {core_rule_hint}
+4) **Letzte Silbe**: Behalte den **Nukleus** (Vokalfamilie wie oben). Die **Koda** soll in einer **ähnlichen Koda-Familie** liegen ({last_coda_family_hint}). Kleine stimmhaft/stimmlos-Wechsel in **derselben Artikulationsstelle** sind ok (z. B. d/t, s/z). **Kein Wechsel der Vokalfamilie.**
+5) **Deutsch**: Nur echte deutsche Wörter oder sehr plausible Komposita/Mehrwortphrasen.
+6) **Vielfalt**: Keine Serien gleicher Präfixe (max. 2 Kandidaten mit identischem Anfang). Keine Fantasieendungen.
+7) **Phrasenanteil**: **{target_phrase_pct}% Mehrwortphrasen (2–5 Wörter)**, der Rest **Einwortkandidaten**.
+8) **Selbstcheck vor Ausgabe**: Entferne jeden Kandidaten, der
+   - nicht exakt {base_syllables} Silben hat,
+   - beim **ersten** oder **letzten** Vokal die **Vokalfamilie/Längenklasse** ändert,
+   - {core_selfcheck},
+   - oder offensichtlich kein deutsches Wort/keine plausible Phrase ist.
+
+AUSGABE:
+- Liefere **bis zu {max_results}** hochwertige, unterschiedliche Kandidaten.
+- **Nur** dieses JSON-Objekt: {{"candidates":["...","..."]}}
+"""
 
 
 
