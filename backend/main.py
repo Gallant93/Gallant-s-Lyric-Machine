@@ -1209,6 +1209,60 @@ def find_rhymes_endpoint():
     Korrigierte Version: Verwendet den exakten zweistufigen Prozess aus test_models.py
     MIT den neuen sprachlichen Verbesserungen im Prompt
     """
+    # Mini-Fallback, falls keine Vokalsequenz aus der Analyse kommt
+    def _simple_vowel_scan_de(word: str):
+        w = word.lower()
+        out = []
+        i = 0
+        while i < len(w):
+            ch2 = w[i:i+2]
+            # sehr grob – reicht als Fallback; deine Analyse ist primär
+            if ch2 in ("ei", "ai", "au", "eu", "äu", "oi", "ie"):
+                out.append(ch2[0])      # Vokalfamilie ~ erster Buchstabe
+                i += 2
+                continue
+            if w[i] in "aeiouyäöü":
+                out.append(w[i])
+            i += 1
+        return out
+
+    # --- Sequence-Gate Helpers (deutsche Vokalspur; inkl. "er" → 'a' Mapping) ---
+    def _vowel_seq_for_compare(word: str):
+        w = word.lower()
+        V = "aeiouyäöü"
+        out = []
+        i = 0
+        while i < len(w):
+            # "er" → 'a', wenn 'er' in Koda (nach 'r' kein Vokal oder Wortende)
+            if w[i] == "e" and i + 1 < len(w) and w[i + 1] == "r":
+                nxt = w[i + 2] if i + 2 < len(w) else ""
+                if not nxt or nxt not in V:
+                    out.append("a")
+                    i += 2
+                    continue
+            # einfache Diphthong-Heuristik: erste Komponente als Familie
+            dig = w[i:i+2]
+            if dig in ("ei", "ie", "ai", "au", "eu", "äu", "oi"):
+                out.append(dig[0])
+                i += 2
+                continue
+            if w[i] in V:
+                out.append(w[i])
+            i += 1
+        return out
+
+    def _hamming(a, b):
+        return sum(1 for x, y in zip(a, b) if x != y)
+
+    def _seq_ok(base_seq, cand_seq, var_limit: int):
+        return (
+            len(cand_seq) == len(base_seq)
+            and base_seq and cand_seq
+            and cand_seq[0] == base_seq[0]
+            and cand_seq[-1] == base_seq[-1]
+            and _hamming(base_seq, cand_seq) <= var_limit
+        )
+
     logger.info(">>> /api/rhymes LOADED (patch v1)")
     try:
         data = request.get_json()
@@ -1223,6 +1277,13 @@ def find_rhymes_endpoint():
         TARGET_PHRASE_RATIO = float(data.get('target_phrase_ratio', 0.30))
         MAX_PER_FAMILY     = int(data.get('max_per_family', 2))
         MAX_RESULTS        = int(data.get('max_results', 12))
+
+        VAR_LIMIT = int(data.get("var_limit", 1))  # z.B. 1 = eine innere Abweichung erlaubt
+
+        # Basissequenz (mit "er"→'a") für Sequence-Gate + Prompt
+        base_seq_cmp = _vowel_seq_for_compare(input_word)
+        base_seq_str = "-".join(base_seq_cmp)
+        logger.info(f"-- SequenceGate: base_seq={base_seq_str}, var_limit={VAR_LIMIT}")
 
         # Basis-Schwa & Silben
         base_syllables = count_syllables_strict(input_word)
@@ -1289,6 +1350,52 @@ def find_rhymes_endpoint():
         core_vowel_family   = target_analysis.get("core_vowel_family")
         core_vowel_length   = target_analysis.get("core_vowel_length")
 
+        # --- Vokal-Sequenz aus der Analyse / Fallback ---
+        vseq_str = (
+            target_analysis.get("vowelSequence")
+            or target_analysis.get("vowel_sequence")
+            or ""
+        )
+        vowels = [v for v in vseq_str.split("-") if v] if vseq_str else []
+        if not vowels:
+            vowels = _simple_vowel_scan_de(input_word)
+
+        # --- Schwa-Kandidat am Wortende erkennen (einfach, einmalig) ---
+        base_word_lc = input_word.lower()
+        schwa_suffixes = ("e", "en", "er", "el", "em", "es")
+        base_core = base_word_lc
+        for _suf in schwa_suffixes:
+            if base_word_lc.endswith(_suf):
+                base_core = base_word_lc[: -len(_suf)]
+                break
+
+        # --- first/last Vokalfamilie/Laenge robust füllen ---
+        if not first_vowel_family and vowels:
+            first_vowel_family = vowels[0]
+        if not first_vowel_length:
+            first_vowel_length = len_class  # "short"/"long" aus deiner Analyse
+
+        # letzter relevanter Vokal (Schwa ignorieren, falls erkannt)
+        if vowels:
+            last_vowel_family = vowels[-1]
+            if base_core != base_word_lc and len(vowels) >= 2:
+                last_vowel_family = vowels[-2]
+        if not last_vowel_length:
+            # Heuristik: wenn wir Schwa abgeschnitten haben, letzten Vokal eher "long"
+            last_vowel_length = "long" if base_core != base_word_lc else len_class
+
+        # --- Kernvokal-Heuristik, falls keine Betonung erkannt (und >=3 Vokale) ---
+        if not core_vowel_family and len(vowels) >= 3:
+            # meist sitzt der hörbare Kern vor der letzten Silbe -> zweitletzter
+            core_vowel_family = vowels[-2]
+            if not core_vowel_length:
+                core_vowel_length = last_vowel_length  # sanfte Annahme
+
+        logger.info(
+            f"-- Anker: vowels={vowels}, first={first_vowel_family}/{first_vowel_length}, "
+            f"core={core_vowel_family or '-'} , last={last_vowel_family}/{last_vowel_length}"
+        )
+
         if core_vowel_family:
             core_rule       = f"Zwischen erstem und letztem Vokal muss **genau einmal** ein betonter Vokal der Familie {core_vowel_family} (Länge={core_vowel_length}) auftreten."
             core_rule_hint  = "Dieser Kern liegt syllabisch vor der letzten Silbe."
@@ -1304,23 +1411,27 @@ Du bist ein deutscher Reim-Coach. Erzeuge starke, natürliche Reimkandidaten fü
 REGELN (unbedingt einhalten):
 1) **Ausgabeform**: Gib **nur JSON** zurück: {{"candidates":["...","..."]}}. Keine Erklärungen, keine Gedanken, nichts davor oder danach.
 2) **Silbenzahl**: Jeder Kandidat hat **genau {base_syllables} Silben**.
-3) **Vokal-Anker (Familie/Längenklasse)**:
+3) **Vokalspur**: Folge der Sequenz **'{base_seq_str}'** (nur Vokalfamilien; „**er**" in Koda zählt als **a**). **Erster** und **letzter** Vokal müssen identisch sein; **innere** Abweichungen max. **{VAR_LIMIT}**.
+3a) **Endmuster-Hinweis**: Wenn der letzte Vokal zu **`e`** gehört, nutze bevorzugt Endungen wie `-ade`, `-age`, `-ale`, `-ase`, `-ate`, `-ame`. Vermeide `-and`, `-ant`, `-ank`, `-anz`.
+    (Beispiel nur zur Klang-Form, nicht übernehmen: Bei `o-e-a-e` wären Formen wie „…fassade“, „…anlage“ klanglich passend.)
+4) **Vokal-Anker (Familie/Längenklasse)**:
    - **Erster Vokal**: Familie={first_vowel_family}, Länge={first_vowel_length} – muss übereinstimmen.
    - **Letzter Vokal**: Familie={last_vowel_family}, Länge={last_vowel_length} – muss übereinstimmen.
+   - **Letzter relevanter Vokal**: **Ignoriere finale Schwa-Endungen** (-e, -en, -er, -el, -em, -es). Referenz ist der letzte **nicht-Schwa**-Vokal.
    - **Innerer betonter Vokal**: {core_rule}
      {core_rule_hint}
-4) **Letzte Silbe**: Behalte den **Nukleus** (Vokalfamilie wie oben). Die **Koda** soll in einer **ähnlichen Koda-Familie** liegen ({last_coda_family_hint}). Kleine stimmhaft/stimmlos-Wechsel in **derselben Artikulationsstelle** sind ok (z. B. d/t, s/z). **Kein Wechsel der Vokalfamilie.**
-5) **Deutsch**: Nur echte deutsche Wörter oder sehr plausible Komposita/Mehrwortphrasen.
-6) **Vielfalt**: Keine Serien gleicher Präfixe (max. 2 Kandidaten mit identischem Anfang). Keine Fantasieendungen.
-7) **Phrasenanteil**: **{target_phrase_pct}% Mehrwortphrasen (2–5 Wörter)**, der Rest **Einwortkandidaten**.
-8) **Selbstcheck vor Ausgabe**: Entferne jeden Kandidaten, der
+5) **Letzte Silbe**: Behalte den **Nukleus** (Vokalfamilie wie oben). Die **Koda** soll in einer **ähnlichen Koda-Familie** liegen ({last_coda_family_hint}). Kleine stimmhaft/stimmlos-Wechsel in **derselben Artikulationsstelle** sind ok (z. B. d/t, s/z). **Kein Wechsel der Vokalfamilie.**
+6) **Deutsch**: Nur echte deutsche Wörter oder sehr plausible Komposita/Mehrwortphrasen.
+7) **Vielfalt**: Keine Serien gleicher Präfixe (max. 2 Kandidaten mit identischem Anfang). Keine Fantasieendungen.
+8) **Phrasenanteil**: **{target_phrase_pct}% Mehrwortphrasen (2–5 Wörter)**, der Rest **Einwortkandidaten**.
+9) **Selbstcheck vor Ausgabe**: Entferne jeden Kandidaten, der
    - nicht exakt {base_syllables} Silben hat,
    - beim **ersten** oder **letzten** Vokal die **Vokalfamilie/Längenklasse** ändert,
    - {core_selfcheck},
    - oder offensichtlich kein deutsches Wort/keine plausible Phrase ist.
 
 AUSGABE:
-- Liefere **bis zu {max_results}** hochwertige, unterschiedliche Kandidaten.
+- Liefere **bis zu {MAX_RESULTS}** hochwertige, unterschiedliche Kandidaten.
 - **Nur** dieses JSON-Objekt: {{"candidates":["...","..."]}}
 """
 
@@ -1450,6 +1561,12 @@ AUSGABE:
             for c in valid_candidates:
                 syl = count_syllables_strict(c)
                 if syl == base_syllables:
+                    # --- Sequence-Gate: Vokalspur muss passen ---
+                    cand_seq_cmp = _vowel_seq_for_compare(c)
+                    if not _seq_ok(base_seq_cmp, cand_seq_cmp, VAR_LIMIT):
+                        if DEBUG_VALIDATION:
+                            logger.info(f"    REJECT seq: base={base_seq_str} cand={'-'.join(cand_seq_cmp)}")
+                        continue
                     syllable_ok.append(c)
                 else:
                     if DEBUG_VALIDATION:
@@ -1463,6 +1580,13 @@ AUSGABE:
 
             # Ab hier NUR noch mit den Silben-korrekten Kandidaten weiterarbeiten
             valid_candidates = syllable_ok
+
+            # --- Optional: Sortierung nach Hamming-Distanz (beste zuerst) ---
+            def _score_by_seq(cand: str):
+                cseq = _vowel_seq_for_compare(cand)
+                return _hamming(base_seq_cmp, cseq)  # 0 (perfekt) vor 1 vor 2 ...
+
+            valid_candidates.sort(key=_score_by_seq)
 
             # NEU: Pass-1 Kurzinfo
             fam_cluster, fam_after = last_stressed_vowel_cluster(input_word)
