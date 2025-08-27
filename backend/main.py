@@ -8,6 +8,13 @@ import uuid
 from typing import Union
 import re
 
+# --- NEU: Silbenzählung mit Pyphen (de_DE) ---
+try:
+    import pyphen
+    _pyphen_de = pyphen.Pyphen(lang="de_DE")
+except Exception:
+    _pyphen_de = None  # Fallback greift dann automatisch
+
 import anthropic
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -587,6 +594,49 @@ def count_syllables(text: str) -> int:
         total += len(clusters)
     return total
 # === ENDE NEU ===
+
+# --- NEU: strenger Silbenzähler für Wort & Phrase ---
+_VOWELS_DE = "aeiouäöüy"
+
+def _count_syllables_word_pyphen(word: str) -> int:
+    """Zähle Silben für EIN Wort per Pyphen; Fallback: Heuristik."""
+    w = word.lower().replace("'", "'").strip("'")
+    if not w:
+        return 0
+    # Klein-Normalisierung für Kontraktionen, damit Zählung stabil bleibt
+    if w in {"'n", "n'", "'n"}:
+        w = "nen"
+    if w in {"'ne", "'ne"}:
+        w = "ne"
+    # Pyphen-Zählung
+    if _pyphen_de:
+        inserted = _pyphen_de.inserted(w)  # z.B. "pol-ter-ab-end"
+        if inserted:
+            return inserted.count("-") + 1
+        # Wenn nichts getrennt wurde, ist es mind. 1 Silbe
+        return 1
+    # Fallback: sehr simple Heuristik (Vokalgruppen)
+    import re
+    vgroups = re.findall(rf"[{_VOWELS_DE}]+", w)
+    return max(1, len(vgroups))
+
+def count_syllables_strict(text: str) -> int:
+    """
+    Zähle Silben in EINEM Wort ODER in einer MEHRWORTPHRASE (Summe).
+    Nicht-alphabetische Tokens werden ignoriert.
+    """
+    import re
+    # Worte/Token extrahieren (inkl. Umlauten & ' )
+    tokens = re.findall(r"[A-Za-zÄÖÜäöüß'']+", text)
+    total = 0
+    for t in tokens:
+        # Bindestriche in zusammengesetzten Wörtern nicht doppelt werten
+        t_clean = t.replace("-", "")
+        # nur alphabetisch?
+        if not re.search(r"[A-Za-zÄÖÜäöüß]", t_clean):
+            continue
+        total += _count_syllables_word_pyphen(t_clean)
+    return total
 
 
 
@@ -1175,7 +1225,7 @@ def find_rhymes_endpoint():
         MAX_RESULTS        = int(data.get('max_results', 12))
 
         # Basis-Schwa & Silben
-        base_syllables = count_syllables(input_word)
+        base_syllables = count_syllables_strict(input_word)
         base_schwa     = get_schwa_suffix(input_word)
 
         # NEU: Start des Loggings für diese Anfrage
@@ -1355,8 +1405,29 @@ def find_rhymes_endpoint():
             logger.info(f"    - {len(valid_candidates)} valide Kandidaten aus der Antwort extrahiert.")
             logger.info(f"    - Extrahierte Kandidaten: {valid_candidates}")
 
-            # NEU: Pass-1 Kurzinfo
-            
+            # --- NEU: strenges Silben-Gate für Run 1 ---
+            raw_count = len(valid_candidates)
+            syllable_ok = []
+            if DEBUG_VALIDATION:
+                rejects = []
+
+            for c in valid_candidates:
+                syl = count_syllables_strict(c)
+                if syl == base_syllables:
+                    syllable_ok.append(c)
+                else:
+                    if DEBUG_VALIDATION:
+                        rejects.append((c, syl))
+
+            if DEBUG_VALIDATION and rejects:
+                for c, syl in rejects:
+                    logger.info(f"/api/rhymes Pass1 reject (syll): '{c}' -> {syl} vs base {base_syllables}")
+
+            logger.info(f"/api/rhymes Pass1 (Silben): base_syll={base_syllables}, after_syll_eq={len(syllable_ok)} / raw={raw_count}")
+
+            # Ab hier NUR noch mit den Silben-korrekten Kandidaten weiterarbeiten
+            valid_candidates = syllable_ok
+
             # NEU: Pass-1 Kurzinfo
             fam_cluster, fam_after = last_stressed_vowel_cluster(input_word)
             len_class = _length_class(fam_cluster, fam_after or '') if fam_cluster else ''
