@@ -1263,6 +1263,40 @@ def find_rhymes_endpoint():
             and _hamming(base_seq, cand_seq) <= var_limit
         )
 
+    # --- Erste-Vokal-Länge (kurz/lang), einfache deutsche Heuristik ---
+    def _first_vowel_length(word: str) -> str:
+        """
+        'long' wenn: Doppelvokal (aa/ee/oo/..), Dehnungs-h nach dem Vokal,
+        oder die erste Silbe ist 'offen' (genau 1 Konsonant zwischen erstem und nächstem Vokal).
+        'short' wenn: Konsonantencluster >= 2 nach dem Vokal => geschlossene Silbe.
+        Fallback: 'unknown' (nicht prüfen).
+        """
+        w = word.lower()
+        V = "aeiouyäöü"
+        # Position des ersten Vokals
+        i = next((k for k,ch in enumerate(w) if ch in V), -1)
+        if i == -1:
+            return "unknown"
+
+        # Doppelvokal (aa/ee/oo/…)
+        if i + 1 < len(w) and w[i+1] in V:
+            return "long"
+        # Dehnungs-h (z. B. "oh", "ah")
+        if i + 1 < len(w) and w[i+1] == "h":
+            return "long"
+
+        # Konsonanten bis zum nächsten Vokal zählen
+        j = i + 1
+        cons = 0
+        while j < len(w) and w[j] not in V:
+            cons += 1
+            j += 1
+
+        if cons >= 2:
+            return "short"   # geschlossen -> kurz
+        # cons == 0 (direkt Vokal) oder cons == 1 (typisch offene Silbe) -> tendenziell lang
+        return "long"
+
     logger.info(">>> /api/rhymes LOADED (patch v1)")
     try:
         data = request.get_json()
@@ -1278,12 +1312,19 @@ def find_rhymes_endpoint():
         MAX_PER_FAMILY     = int(data.get('max_per_family', 2))
         MAX_RESULTS        = int(data.get('max_results', 12))
 
-        VAR_LIMIT = int(data.get("var_limit", 1))  # z.B. 1 = eine innere Abweichung erlaubt
+        # Strenge Toleranz NUR für den Validator (Hamming-Distanz)
+        VAR_LIMIT = int(data.get("var_limit", 1))  # 1 bleibt hart
+
+        # Etwas lockerer NUR in der Generierung (Prompt), kostet fast nichts
+        GEN_VAR_LIMIT = int(data.get("gen_var_limit", 2))  # 2 = innere Abweichungen bis 2 im Text
 
         # Basissequenz (mit "er"→'a") für Sequence-Gate + Prompt
         base_seq_cmp = _vowel_seq_for_compare(input_word)
         base_seq_str = "-".join(base_seq_cmp)
         logger.info(f"-- SequenceGate: base_seq={base_seq_str}, var_limit={VAR_LIMIT}")
+
+        base_first_len = _first_vowel_length(input_word)
+        logger.info(f"-- FirstVowel: base_len={base_first_len}")
 
         # Basis-Schwa & Silben
         base_syllables = count_syllables_strict(input_word)
@@ -1411,8 +1452,9 @@ Du bist ein deutscher Reim-Coach. Erzeuge starke, natürliche Reimkandidaten fü
 REGELN (unbedingt einhalten):
 1) **Ausgabeform**: Gib **nur JSON** zurück: {{"candidates":["...","..."]}}. Keine Erklärungen, keine Gedanken, nichts davor oder danach.
 2) **Silbenzahl**: Jeder Kandidat hat **genau {base_syllables} Silben**.
-3) **Vokalspur**: Folge der Sequenz **'{base_seq_str}'** (nur Vokalfamilien; „**er**" in Koda zählt als **a**). **Erster** und **letzter** Vokal müssen identisch sein; **innere** Abweichungen max. **{VAR_LIMIT}**.
-3a) **Endmuster-Hinweis**: Wenn der letzte Vokal zu **`e`** gehört, nutze bevorzugt Endungen wie `-ade`, `-age`, `-ale`, `-ase`, `-ate`, `-ame`. Vermeide `-and`, `-ant`, `-ank`, `-anz`.
+3) **Vokalspur**: Folge der Sequenz **`{base_seq_str}`** (nur Vokalfamilien; „**er**" in Koda zählt als **a**). **Erster** und **letzter** Vokal müssen identisch sein; **innere** Abweichungen max. **{GEN_VAR_LIMIT}**.
+3a) **Endmuster-Hinweis**: Bei letztem Vokal **`e`** nutze bevorzugt Endungen wie `-ade`, `-age`, `-ale`, `-ase`, `-ate`, `-ame`; vermeide `-and`, `-ant`, `-ank`, `-anz`.
+3b) **Erste Vokal-Länge:** **{base_first_len}** wie im Ausgangswort (keine Dehnung; kein "oh/oo" wenn **kurz**).
     (Beispiel nur zur Klang-Form, nicht übernehmen: Bei `o-e-a-e` wären Formen wie „…fassade“, „…anlage“ klanglich passend.)
 4) **Vokal-Anker (Familie/Längenklasse)**:
    - **Erster Vokal**: Familie={first_vowel_family}, Länge={first_vowel_length} – muss übereinstimmen.
@@ -1567,6 +1609,15 @@ AUSGABE:
                         if DEBUG_VALIDATION:
                             logger.info(f"    REJECT seq: base={base_seq_str} cand={'-'.join(cand_seq_cmp)}")
                         continue
+
+                    # --- Erste-Vokal-Länge muss mit der des Basisworts übereinstimmen (falls bekannt) ---
+                    if base_first_len in ("short", "long"):
+                        cand_first_len = _first_vowel_length(c)
+                        if cand_first_len != base_first_len:
+                            if DEBUG_VALIDATION:
+                                logger.info(f"    REJECT len: base={base_first_len} cand={cand_first_len} word={c}")
+                            continue
+
                     syllable_ok.append(c)
                 else:
                     if DEBUG_VALIDATION:
@@ -1588,6 +1639,31 @@ AUSGABE:
 
             valid_candidates.sort(key=_score_by_seq)
 
+            # ---- Diversity-Cap: max. 2 pro End-Familie (letzte 4 Buchstaben)
+            def _family_key(w: str) -> str:
+                s = re.sub(r"[^a-zäöüß]", "", w.lower())
+                return s[-4:] if len(s) >= 4 else s
+
+            MAX_PER_FAMILY = 2
+            diverse = []
+            seen = {}
+            for c in valid_candidates:
+                k = _family_key(c)
+                if seen.get(k, 0) >= MAX_PER_FAMILY:
+                    if DEBUG_VALIDATION:
+                        logger.info(f"    DROP by diversity cap: {c} (family {k})")
+                    continue
+                diverse.append(c)
+                seen[k] = seen.get(k, 0) + 1
+
+            valid_candidates = diverse
+
+            # --- Optional: Sortierung nach Hamming-Distanz (beste zuerst) ---
+            def _score_by_seq(cand: str):
+                return _hamming(base_seq_cmp, _vowel_seq_for_compare(cand))
+
+            valid_candidates.sort(key=_score_by_seq)  # 0-Fehler vor 1-Fehler vor 2-Fehler
+
             # NEU: Pass-1 Kurzinfo
             fam_cluster, fam_after = last_stressed_vowel_cluster(input_word)
             len_class = _length_class(fam_cluster, fam_after or '') if fam_cluster else ''
@@ -1602,7 +1678,7 @@ AUSGABE:
             before_set = set(valid_candidates)  # NEU: zum Vergleichen nach dem Second Pass
             
             # === NEU: Reject-Sampling, wenn zu wenige Treffer ===
-            if len(valid_candidates) < N_MIN:
+            if len(valid_candidates) < 6:  # vorher evtl. 8; jetzt sparsamer
                 logger.info(f"/api/rhymes: Nur {len(valid_candidates)} Treffer – starte Second Pass (Reject-Sampling).")
 
                 # --- NEU: Falls zu wenig Phrasen, Pass 2 auf "nur Phrasen" stellen ---
@@ -1625,8 +1701,9 @@ AUSGABE:
                 phrase_only_needed = (len(phrases) < TARGET_PHRASE_RATIO * max(1, len(valid_candidates)))
 
                 # Wir nutzen dasselbe Schema wie im ersten Lauf (JSON-only mit candidates[])
+                # Für Second-Pass: höhere Toleranz (3 statt 2)
                 second_prompt = (
-                    f"{creative_prompt}\n\n"
+                    f"{creative_prompt.replace('{GEN_VAR_LIMIT}', str(max(GEN_VAR_LIMIT, 3)))}\n\n"
                     "ERGÄNZUNG (zweiter Lauf / Reject-Sampling):\n"
                     f"- Erzeuge 40 NEUE Kandidaten.\n"
                     f"- Vermeide strikt diese Reimfamilien (Kern|Koda): {', '.join(banned_families) if banned_families else '—'}\n"
@@ -1649,6 +1726,7 @@ AUSGABE:
                     target_phrase_pct = int(TARGET_PHRASE_RATIO * 100)
                     second_prompt += (
                         f"\n- Mindestens {target_phrase_pct}% Mehrwortphrasen (2–5 Wörter).\n"
+                        "(Bevorzuge bei Gleichstand Mehrwortphrasen (2–5 Wörter).)\n"
                         "- Antworte NUR als JSON {\"candidates\": [\"...\"]}.\n"
                     )
 
