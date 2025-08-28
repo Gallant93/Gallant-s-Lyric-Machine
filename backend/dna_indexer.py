@@ -18,12 +18,20 @@ def _f(name):
 
 # ---- Signatur
 def signature(word: str) -> Tuple:
-    # extrahiert exakt die Phonetik-Schlüssel, die du ohnehin im Code prüfst
-    count = _f("count_syllables")(word)
-    seq   = tuple(_f("extract_vowel_sequence")(word))                 # z. B. ('o','a','a','e')
-    fst, fst_len = _f("first_vowel_and_length")(word)                 # Familie + Längenklasse
-    core  = _f("inner_stressed_core")(word)                           # oder None
-    last  = _f("last_vowel_family")(word)                             # mit er->a Normalisierung
+    # ERST normalisieren, dann analysieren
+    normalized_word = word
+    try:
+        # Versuche die Backend-Normalisierung zu verwenden
+        if 'normalize_er_schwa' in _BINDINGS:
+            normalized_word = _BINDINGS['normalize_er_schwa'](word)
+    except:
+        pass
+    
+    count = _f("count_syllables")(normalized_word)
+    seq   = tuple(_f("extract_vowel_sequence")(normalized_word))
+    fst, fst_len = _f("first_vowel_and_length")(normalized_word)
+    core  = _f("inner_stressed_core")(normalized_word)
+    last  = _f("last_vowel_family")(normalized_word)
     return (count, seq, fst, fst_len, core, last)
 
 # ---- Laden/Speichern
@@ -83,13 +91,25 @@ def upsert_example(input_word: str, output_word: str) -> None:
     _save_index(idx)
 
 # ---- Generator: recombiniert aus Index, NICHT 1:1
-def generate_from_index(input_word: str, max_results: int, target_phrase_ratio: float, rng_seed: Optional[int]=None) -> List[str]:
+def generate_from_index(
+    input_word: str,
+    max_results: int,
+    target_phrase_ratio: float,
+    rng_seed: Optional[int] = None,
+    pre_sig: Optional[tuple] = None,
+) -> List[str]:
     if rng_seed is not None:
         random.seed(rng_seed)
 
     idx = _load_index()
-    sig_in = repr(signature(input_word))
+    # NEU: wenn eine vorgegebene Signatur mitkommt, nutzen wir die – sonst selbst berechnen
+    sig_in = repr(pre_sig) if pre_sig is not None else repr(signature(input_word))
+
     if sig_in not in idx:
+        try:
+            print(f"[DNA] no bucket for sig={sig_in} available_sigs={list(idx.keys())[:5]}")
+        except Exception:
+            pass
         return []
 
     b = idx[sig_in]
@@ -112,14 +132,24 @@ def generate_from_index(input_word: str, max_results: int, target_phrase_ratio: 
     prefix_counts = {}
 
     def _ok(c: str) -> bool:
-        if c in verbatim:    # <<== verhindert 1:1-Ausgabe der DNA-Outputs
+        if c in verbatim:
+            print(f"[DNA] reject verbatim: {c}")
             return False
-        if not passes_seq(c): return False
-        if not passes_syl(c): return False
-        if not (is_phrase(c) if " " in c else is_word(c)): return False
+        if not passes_seq(c): 
+            print(f"[DNA] reject seq: {c}")
+            return False
+        if not passes_syl(c): 
+            print(f"[DNA] reject syl: {c}")
+            return False
+        if not (is_phrase(c) if " " in c else is_word(c)): 
+            print(f"[DNA] reject lexicon: {c}")
+            return False
         k = prefix_key(c)
-        if prefix_counts.get(k, 0) >= cap: return False
+        if prefix_counts.get(k, 0) >= cap: 
+            print(f"[DNA] reject prefix_cap: {c} (key={k})")
+            return False
         prefix_counts[k] = prefix_counts.get(k, 0) + 1
+        print(f"[DNA] accept: {c}")
         return True
 
     # 1) Phrasen bis Quote
@@ -149,4 +179,12 @@ def generate_from_index(input_word: str, max_results: int, target_phrase_ratio: 
         if _ok(cand):
             accepted.append(cand)
 
+    # VOR dem return:
+    try:
+        print(f"[DNA] generated {len(accepted)} candidates: {accepted}")
+        print(f"[DNA] tried {len(tried)} total candidates")
+        print(f"[DNA] prefix_counts: {prefix_counts}")
+    except Exception:
+        pass
+    
     return accepted[:max_results]

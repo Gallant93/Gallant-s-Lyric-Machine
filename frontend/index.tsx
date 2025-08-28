@@ -1323,59 +1323,96 @@ const handleSaveRhymeLesson = () => {
     setLessonRhyme('');
 };
 
-// Migration: Bestehende Rhyme Lessons ins DNA-System übertragen
-const handleMigrateExistingRhymes = async () => {
-    const profile = getCurrentProfile();
-    if (!profile || !profile.library) {
-        showStatus("Keine Profildaten für Migration gefunden.", true);
-        return;
+// ---- Robust: Reim-Lektionen überall im Profil finden ----
+type AnyObj = Record<string, any>;
+type RhymePair = { input: string; output: string };
+
+
+
+function collectRhymeExamples(profile: AnyObj): { examples: RhymePair[]; debug: string } {
+  const examples: RhymePair[] = [];
+  const debugLines: string[] = [];
+
+  if (!profile || typeof profile !== "object") {
+    return { examples, debug: "kein Profil" };
+  }
+
+  // Suche direkt nach rhyme_lesson_group Objekten in der Bibliothek
+  const library = profile.library;
+  if (!Array.isArray(library)) {
+    return { examples, debug: "keine library gefunden" };
+  }
+
+  // Filtere rhyme_lesson_group Objekte
+  const rhymeGroups = library.filter(item => 
+    item && typeof item === "object" && item.type === 'rhyme_lesson_group'
+  );
+
+  debugLines.push(`gefunden: ${rhymeGroups.length} rhyme_lesson_group`);
+
+  // Extrahiere Reim-Paare
+  for (const group of rhymeGroups) {
+    const targetWord = group.targetWord;
+    const rhymes = group.rhymes;
+
+    if (!targetWord || !Array.isArray(rhymes)) {
+      continue;
     }
 
-    // Sammle alle vorhandenen RhymeLessonGroups
-    const rhymeLessonGroups = profile.library.filter(item => item.type === 'rhyme_lesson_group') as RhymeLessonGroup[];
-    
-    if (rhymeLessonGroups.length === 0) {
-        showStatus("Keine Reim-Lektionen für Migration gefunden.", false);
-        return;
+    for (const rhyme of rhymes) {
+      const rhymingWord = rhyme.rhymingWord;
+      if (rhymingWord && typeof rhymingWord === "string") {
+        examples.push({ input: targetWord, output: rhymingWord });
+      }
+    }
+  }
+
+  debugLines.push(`extrahiert: ${examples.length} Reim-Paare`);
+  return { examples, debug: debugLines.join(" | ") };
+}
+
+const handleMigrateClick = React.useCallback(() => {
+  if (!activeProfile) {
+    alert("Kein Profil geladen.");
+    return;
+  }
+  
+  migrateDnaToIndex(activeProfile as any);
+}, [activeProfile]);
+
+async function migrateDnaToIndex(profile: AnyObj) {
+  try {
+    const { examples, debug } = collectRhymeExamples(profile);
+    console.log("[DNA MIGRATE] debug:", debug);
+
+    if (!examples.length) {
+      alert("Keine Beispiele in der Künstler-DNA gefunden.\n(Debug: " + debug + ")");
+      return;
     }
 
-    // Erstelle flache Liste aller Reim-Paare
-    const allPairs: Array<{input: string, output: string}> = [];
-    rhymeLessonGroups.forEach(group => {
-        group.rhymes.forEach(rhyme => {
-            allPairs.push({
-                input: group.targetWord,
-                output: rhyme.rhymingWord
-            });
-        });
+    // KORRIGIERTE URL mit BACKEND_URL
+    const res = await fetch(`${BACKEND_URL}/api/dna/bulk_upsert`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ examples }),
     });
 
-    if (allPairs.length === 0) {
-        showStatus("Keine Reim-Paare für Migration gefunden.", false);
-        return;
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.error("bulk_upsert failed", res.status, json);
+      alert(`Migration fehlgeschlagen: ${json?.error ?? res.statusText}`);
+      return;
     }
 
-    try {
-        showStatus(`Migriere ${allPairs.length} Reim-Paare ins DNA-System...`, false);
-        
-        const response = await fetch(`${BACKEND_URL}/api/dna/bulk_upsert`, {
-            method: "POST",
-            headers: {"Content-Type":"application/json"},
-            body: JSON.stringify({ examples: allPairs })
-        });
+    console.log("bulk_upsert ok", json);
+    alert(`Migration erfolgreich: ${json.inserted ?? 0} übernommen, ${json.skipped ?? 0} übersprungen.`);
+  } catch (err: any) {
+    console.error("bulk_upsert error", err);
+    alert(`Migration fehlgeschlagen: ${err?.message ?? String(err)}`);
+  }
+}
 
-        if (!response.ok) {
-            throw new Error(`Migration fehlgeschlagen: ${response.status}`);
-        }
 
-        const result = await response.json();
-        showStatus(`Migration erfolgreich: ${result.inserted} Paare eingefügt, ${result.skipped} übersprungen.`, false);
-        
-    } catch (error) {
-        console.error('Migration error:', error);
-        showStatus(`Migration fehlgeschlagen: ${error.message}`, true);
-    }
-};
 
 const handleSaveSingleRhyme = (targetWord: string, newRhyme: string) => {
     updateProfileLibrary(library => {
@@ -3730,7 +3767,14 @@ const renderRhymeMachineView = () => (
                 </div>
                 <div className="rhyme-lesson-buttons">
                     <button className="secondary-action-button align-start" onClick={handleSaveRhymeLesson}>Lektion zur DNA hinzufügen</button>
-                    <button className="tertiary-action-button align-start" onClick={handleMigrateExistingRhymes}>Alle bestehenden Reime migrieren</button>
+                    <button
+                        type="button"
+                        className="tertiary-action-button align-start"
+                        onClick={handleMigrateClick}
+                        title="Schreibt alle gelernten Reim-Beispiele in den DNA-Index."
+                    >
+                        Reime migrieren
+                    </button>
                 </div>
             </div>
 
@@ -4198,3 +4242,4 @@ if (container) {
     const root = createRoot(container);
     root.render(<React.StrictMode><App /></React.StrictMode>);
 }
+
