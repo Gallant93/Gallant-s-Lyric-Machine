@@ -8,12 +8,12 @@ import uuid
 from typing import Union
 import re
 
-# --- NEU: Silbenzählung mit Pyphen (de_DE) ---
+# --- Phonetik: Silbentrennung (deutsch) für Schwa/„er"-Normalisierung
 try:
     import pyphen
-    _pyphen_de = pyphen.Pyphen(lang="de_DE")
+    _DIC_DE = pyphen.Pyphen(lang="de_DE")
 except Exception:
-    _pyphen_de = None  # Fallback greift dann automatisch
+    _DIC_DE = None
 
 import anthropic
 from flask import Flask, jsonify, request
@@ -465,6 +465,24 @@ def _normalize_coda(coda: str) -> str:
         s = s.replace(a, b)
     return s
 
+# --- Vokal-Familien-Nachbarschaften: nur für den ERSTEN Vokal erlaubt
+_NEAR_FAMILY = {
+    "o": {"eu", "au"},
+    "eu": {"o"},
+    "au": {"o"},
+    "e": {"ä"},
+    "ä": {"e"},
+    "i": {"ie"},
+    "ie": {"i"},
+}
+
+def same_or_neighbor_family(f1: str, f2: str, position: str) -> bool:
+    if f1 == f2:
+        return True
+    if position == "first":
+        return (f2 in _NEAR_FAMILY.get(f1, set())) or (f1 in _NEAR_FAMILY.get(f2, set()))
+    return False
+
 def first_vowel_family_match(base_word: str, candidate: str) -> bool:
     """Erster Vokal (Familie) muss übereinstimmen (ä~e, ö~o, ü~u; Diphthonge 1:1)."""
     b = _first_vowel_cluster(base_word)
@@ -578,67 +596,50 @@ def vowel_length_compatible(base_word: str, candidate: str) -> bool:
 
 
 
-# === NEU: Silbenzähler ===
-def count_syllables(text: str) -> int:
-    """
-    Zählt Silben über Vokal-Cluster (aa, ee, oo, uu, ää, öö, üü, ie, ei, ai, au, eu/äu, oi, ui,
-    sowie a e i o u ä ö ü y). Schwa-Endungen zählen mit. Bei Phrasen wird summiert.
-    """
-    if not text:
-        return 0
-    total = 0
-    tokens = re.findall(r"[A-Za-zÄÖÜäöüß'']+", text)
-    for tok in tokens:
-        w = tok.lower().replace("'", "'")
-        clusters = _VOWEL_CLUSTER_RE.findall(w)  # nutzt deine bestehende Regex
-        total += len(clusters)
-    return total
-# === ENDE NEU ===
 
-# --- NEU: strenger Silbenzähler für Wort & Phrase ---
-_VOWELS_DE = "aeiouäöüy"
+# --- Silbifizierung (deutsch): benutzt pyphen, fallback auf simple Heuristik
+def _syllabify_de(word: str) -> list[str]:
+    w = word.lower()
+    if _DIC_DE:
+        return _DIC_DE.inserted(w).split("-")
+    # Fallback: grobe Heuristik (nur als Notnagel)
+    # trennt nach Vokalgruppen. Für Schwa-Erkennung reicht's als Plan B.
+    parts = re.findall(r"[bcdfghjklmnpqrstvwxyz]*[aeiouyäöü]+(?:h)?[bcdfghjklmnpqrstvwxyz]*", w)
+    return parts if parts else [w]
 
-def _count_syllables_word_pyphen(word: str) -> int:
-    """Zähle Silben für EIN Wort per Pyphen; Fallback: Heuristik."""
-    w = word.lower().replace("'", "'").strip("'")
-    if not w:
-        return 0
-    # Klein-Normalisierung für Kontraktionen, damit Zählung stabil bleibt
-    if w in {"'n", "n'", "'n"}:
-        w = "nen"
-    if w in {"'ne", "'ne"}:
-        w = "ne"
-    # Pyphen-Zählung
-    if _pyphen_de:
-        inserted = _pyphen_de.inserted(w)  # z.B. "pol-ter-ab-end"
-        if inserted:
-            return inserted.count("-") + 1
-        # Wenn nichts getrennt wurde, ist es mind. 1 Silbe
+# --- Schwa-/„er"-Normalisierung NUR für phonetische Analyse:
+#     - 'er' am Wortende → 'a'
+#     - 'er' am Silbenende (nicht erste Silbe) → 'a'  (z.B. HammER-werfER → Hamma-werfA)
+def normalize_er_schwa(word: str) -> str:
+    w = word.lower()
+
+    # 1) Wortfinales '-er' → 'a'
+    w = re.sub(r"er\b", "a", w)
+
+    # 2) Silben-finales '-er' innerhalb von Wörtern (nicht in der ersten Silbe)
+    syls = _syllabify_de(w)
+    if len(syls) > 1:
+        new_syls = []
+        for i, syl in enumerate(syls):
+            s = syl
+            # „-er" am Ende der Silbe (sehr häufig Schwa) → 'a', aber erste Silbe ausklammern
+            if i > 0 and s.endswith("er"):
+                s = s[:-2] + "a"
+            new_syls.append(s)
+        w = "".join(new_syls)
+
+    # Sicherung: falls doch noch Rest 'er' + Konsonantgrenze, entschärfen
+    w = re.sub(r"er(?=[bcdfghjklmnpqrstvwxyz]{1,2}\b)", "a", w)
+    return w
+
+
+def count_syllables(word: str) -> int:
+    """Öffentlicher Silbenzähler – nutzt unsere neue Silbifizierung.
+    Hält die alte API am Leben und vermeidet NameErrors."""
+    try:
+        return max(1, len(_syllabify_de(word)))
+    except Exception:
         return 1
-    # Fallback: sehr simple Heuristik (Vokalgruppen)
-    import re
-    vgroups = re.findall(rf"[{_VOWELS_DE}]+", w)
-    return max(1, len(vgroups))
-
-def count_syllables_strict(text: str) -> int:
-    """
-    Zähle Silben in EINEM Wort ODER in einer MEHRWORTPHRASE (Summe).
-    Nicht-alphabetische Tokens werden ignoriert.
-    """
-    import re
-    # Worte/Token extrahieren (inkl. Umlauten & ' )
-    tokens = re.findall(r"[A-Za-zÄÖÜäöüß'']+", text)
-    total = 0
-    for t in tokens:
-        # Bindestriche in zusammengesetzten Wörtern nicht doppelt werten
-        t_clean = t.replace("-", "")
-        # nur alphabetisch?
-        if not re.search(r"[A-Za-zÄÖÜäöüß]", t_clean):
-            continue
-        total += _count_syllables_word_pyphen(t_clean)
-    return total
-
-
 
 
 _CONS_NORM = [
@@ -1203,6 +1204,76 @@ def trainer_chat_endpoint():
         return jsonify({"error": str(e)}), 500
 
 
+# --- PHRASE-CORE: letztes Inhaltswort extrahieren ---
+def _last_content_token(text: str) -> str:
+    import re
+    # nur Buchstaben als Token (inkl. Umlaute ß)
+    toks = re.findall(r"[A-Za-zÄÖÜäöüß]+", text or "")
+    if not toks:
+        return (text or "").strip()
+    # End-Stoppwörter überspringen (nicht verbieten – nur für die Reimprüfung)
+    stop = {"und", "den", "der", "die", "das", "am", "an", "im", "vom", "zum"}
+    i = len(toks) - 1
+    while i >= 0 and toks[i].lower() in stop:
+        i -= 1
+    return toks[i] if i >= 0 else toks[-1]
+
+# --- „er" am Ende klingt wie „a" (nur für den letzten Vokal relevant) ---
+def _normalize_final_e_schwa_for_last(word: str) -> str:
+    import re
+    # nur am Wortende ersetzen
+    return re.sub(r"er\b", "a", word or "", flags=re.IGNORECASE)
+
+# --- Vokal-Familien-Helper (Wrapper für bestehende Logik) ---
+def get_first_vowel_family(word: str) -> str:
+    """Erste Vokalfamilie aus der Sequenz extrahieren."""
+    # Einfache Vokal-Extraktion als Fallback
+    w = word.lower()
+    V = "aeiouyäöü"
+    for i, ch in enumerate(w):
+        if ch in V:
+            return ch
+    return ""
+
+def get_last_vowel_family(word: str) -> str:
+    """Letzte Vokalfamilie aus der Sequenz extrahieren."""
+    # Einfache Vokal-Extraktion als Fallback
+    w = word.lower()
+    V = "aeiouyäöü"
+    for i in range(len(w) - 1, -1, -1):
+        if w[i] in V:
+            return w[i]
+    return ""
+
+def get_first_length_class(word: str) -> str:
+    """Erste Vokallängenklasse bestimmen."""
+    # Vereinfachte Implementierung
+    w = word.lower()
+    V = "aeiouyäöü"
+    i = next((k for k, ch in enumerate(w) if ch in V), -1)
+    if i == -1:
+        return "unknown"
+    
+    # Einfache Heuristik
+    if i + 1 < len(w) and w[i+1] in V:
+        return "long"
+    if i + 1 < len(w) and w[i+1] == "h":
+        return "long"
+    
+    # Konsonanten bis zum nächsten Vokal zählen
+    j = i + 1
+    cons = 0
+    while j < len(w) and w[j] not in V:
+        cons += 1
+        j += 1
+    
+    return "short" if cons >= 2 else "long"
+
+def get_last_length_class(word: str) -> str:
+    """Letzte Vokallängenklasse bestimmen (vereinfacht)."""
+    # Für den letzten Vokal verwenden wir die gleiche Logik wie für den ersten
+    return get_first_length_class(word)
+
 @app.route('/api/rhymes', methods=['POST'])
 def find_rhymes_endpoint():
     """
@@ -1263,6 +1334,11 @@ def find_rhymes_endpoint():
             and _hamming(base_seq, cand_seq) <= var_limit
         )
 
+    # --- "er" → "a" Normalisierung für Endsilbe ---
+    def _normalize_final_e_schwa(word: str) -> str:
+        # "er" am Wortende klingt i.d.R. wie "a"
+        return re.sub(r"er\b", "a", word, flags=re.IGNORECASE)
+
     # --- Erste-Vokal-Länge (kurz/lang), einfache deutsche Heuristik ---
     def _first_vowel_length(word: str) -> str:
         """
@@ -1302,15 +1378,15 @@ def find_rhymes_endpoint():
         data = request.get_json()
         input_word = data.get('input_word') or data.get('input')
         knowledge_base = data.get('knowledge_base', 'Keine DNA vorhanden.')
-        max_words = int(data.get('max_words', 4))
-        N_MIN = int(data.get('min_results', 12))  # NEU: Mindestanzahl gewünschter Treffer
+        max_words = int(data.get('max_words', 50))
+        N_MIN = int(data.get('min_results', 20))  # NEU: Mindestanzahl gewünschter Treffer
         DEBUG_VALIDATION = bool(data.get('debug', False))  # NEU: Detail-Logs (ablehnungsgründe)
         phrase_only_needed = bool(data.get('phrase_only', False))  # NEU: Nur Phrasen generieren
 
         # Nutzer-Parameter / Defaults
         TARGET_PHRASE_RATIO = float(data.get('target_phrase_ratio', 0.30))
         MAX_PER_FAMILY     = int(data.get('max_per_family', 2))
-        MAX_RESULTS        = int(data.get('max_results', 12))
+        MAX_RESULTS        = int(data.get('max_results', 20))
 
         # Strenge Toleranz NUR für den Validator (Hamming-Distanz)
         VAR_LIMIT = int(data.get("var_limit", 1))  # 1 bleibt hart
@@ -1327,7 +1403,7 @@ def find_rhymes_endpoint():
         logger.info(f"-- FirstVowel: base_len={base_first_len}")
 
         # Basis-Schwa & Silben
-        base_syllables = count_syllables_strict(input_word)
+        base_syllables = count_syllables(input_word)
         base_schwa     = get_schwa_suffix(input_word)
 
         # NEU: Start des Loggings für diese Anfrage
@@ -1341,9 +1417,21 @@ def find_rhymes_endpoint():
             return jsonify({"error": "input_word is missing"}), 400
 
         # === PRÄ-ANALYSE FÜR EINEN PRÄZISEN PROMPT ===
-        target_analysis = get_phonetic_breakdown_py(input_word)
+        # core_word = input_word (das zu analysierende Wort / Phrase-Core)
+        norm_core = normalize_er_schwa(input_word)
+
+        # Zähle & analysiere ab jetzt IMMER auf der Normalform
+        target_analysis = get_phonetic_breakdown_py(norm_core)
         target_syllables = target_analysis.get("syllableCount")
-        target_vowels = target_analysis.get("vowelSequence")
+        target_vowels = target_analysis.get("vowelSequence") or ""
+        first_family = target_analysis.get("firstVowelFamily")
+        last_family = target_analysis.get("lastVowelFamily")
+        first_length = target_analysis.get("firstLengthClass")
+        last_length = target_analysis.get("lastLengthClass")
+
+        logger.info(f"-> Vor-Analyse für '{input_word}': Silben={target_syllables}, "
+                    f"Vokale='{target_vowels}', first=({first_family}/{first_length}), "
+                    f"last=({last_family}/{last_length}), norm='{norm_core}'")
         
         # NEU: Logging der Voranalyse
         logger.info(f"--> Schritt 0: Phonetik-Voranalyse (Python-Skript)")
@@ -1399,7 +1487,11 @@ def find_rhymes_endpoint():
         )
         vowels = [v for v in vseq_str.split("-") if v] if vseq_str else []
         if not vowels:
-            vowels = _simple_vowel_scan_de(input_word)
+            vowels = _simple_vowel_scan_de(norm_for_last)
+
+        # --- "er" → "a" Normalisierung für Endsilbe (Aussprache) ---
+        norm_for_last = _normalize_final_e_schwa(input_word)
+        # ab hier 'norm_for_last' statt 'input_word' für den **letzten** Vokal-Familien-Check benutzen
 
         # --- Schwa-Kandidat am Wortende erkennen (einfach, einmalig) ---
         base_word_lc = input_word.lower()
@@ -1512,15 +1604,22 @@ AUSGABE:
             logger.info("<-- Schritt 1: KREATIVE ANTWORT von KI erhalten.")
             logger.info(f"===== START KREATIV-ANTWORT (ROH) =====\n{creative_output}\n===== ENDE KREATIV-ANTWORT (ROH) =====")
 
+            # --- JSON-SAFE EXTRACT + LINIEN-FALLBACK ---
+            obj, err = parse_json_safely(creative_output)  # nutzt deine parse_json_safely oben
+            if obj and isinstance(obj, dict) and "candidates" in obj and isinstance(obj["candidates"], list):
+                candidates = [c.strip() for c in obj["candidates"] if isinstance(c, str) and c.strip()]
+            else:
+                # Fallback: plain lines zu candidates machen
+                lines = [ln.strip("-*• 0123456789.").strip() for ln in creative_output.splitlines() if ln.strip()]
+                # Alles was wie JSON aussieht (Klammern) vorher raus
+                lines = [ln for ln in lines if not (ln.startswith("{") or ln.endswith("}"))]
+                candidates = lines[:MAX_RESULTS]
+
+            logger.info(f"--> Extrahierte Kandidaten: {candidates!r}")
+
             # Post-Processing direkt hier durchführen
             valid_candidates = []
-            # NEU: Erst versuchen, JSON direkt zu lesen
-            obj, perr = parse_json_safely(creative_output)
-            if not perr and isinstance(obj, dict) and isinstance(obj.get('candidates'), list):
-                lines = [s for s in obj['candidates'] if isinstance(s, str)]
-            else:
-                # Fallback: auf Zeilenebene weiterarbeiten
-                lines = creative_output.splitlines()
+            # NEU: Robuste Schleife, die "Junk"-Wörter UND KI-Kommentare ignoriert
             
             # NEU: Robuste Schleife, die "Junk"-Wörter UND KI-Kommentare ignoriert
             valid_candidates = []
@@ -1533,7 +1632,7 @@ AUSGABE:
                 'alle sind deutsche wörter', 'keine beginnt mit gegen'
             ]
 
-            for line in lines:
+            for line in candidates:
                 line = line.strip()
                 
                 if not line or any(keyword in line.lower() for keyword in ignore_keywords):
@@ -1561,14 +1660,44 @@ AUSGABE:
                 if not cleaned_line or ':' in cleaned_line:
                     continue
 
+                # 1) Phrase-Core bestimmen
+                core = _last_content_token(cleaned_line)
+
+                # 2) Für den letzten-Vokal-Check die „er→a"-Normalisierung nur am Ende anwenden
+                core_for_last = _normalize_final_e_schwa_for_last(core)
+
+                # (optional, aber hilfreich) – kurzer Log
+                logger.debug(f"Phrase-Core: '{cleaned_line}' -> '{core}', last-norm='{core_for_last}'")
+
                 # Phonetik
                 if get_schwa_suffix(cleaned_line) != base_schwa:
                     continue
-                if not first_vowel_family_match(input_word, cleaned_line):
+
+                # --- Normalisierung für Kandidaten (wie beim Zielwort) ---
+                cand_norm = normalize_er_schwa(core)
+                cand_norm_for_last = normalize_er_schwa(core_for_last)
+
+                # --- Erster Vokal (Familie/Längenklasse) – mit Nachbar-Toleranz ---
+                cand_first_family = get_first_vowel_family(cand_norm)
+                if not same_or_neighbor_family(cand_first_family, base_seq_cmp[0], "first"):
                     continue
+
+                cand_first_len = get_first_length_class(cand_norm)
+                if cand_first_len and base_first_len and cand_first_len != base_first_len:
+                    continue
+
+                # --- Letzter Vokal (Familie/Längenklasse) – streng identisch ---
+                cand_last_family = get_last_vowel_family(cand_norm_for_last)
+                if cand_last_family != base_seq_cmp[-1]:
+                    continue
+
+                cand_last_len = get_last_length_class(cand_norm_for_last)
+                if cand_last_len and base_last_len and cand_last_len != base_last_len:
+                    continue
+
                 if not vowel_core_compatible(input_word, cleaned_line):
                     continue
-                if count_syllables(cleaned_line) != base_syllables:
+                if count_syllables(cand_norm) != base_syllables:
                     continue
 
                 # Varianz (feine Familie, z.B. -schwanz/-kranz getrennt zählen)
@@ -1601,18 +1730,25 @@ AUSGABE:
                 rejects = []
 
             for c in valid_candidates:
-                syl = count_syllables_strict(c)
+                syl = count_syllables(c)
                 if syl == base_syllables:
                     # --- Sequence-Gate: Vokalspur muss passen ---
-                    cand_seq_cmp = _vowel_seq_for_compare(c)
+                    # Phrase-Core für Vokalprüfung extrahieren
+                    core = _last_content_token(c)
+                    core_for_last = _normalize_final_e_schwa_for_last(core)
+                    
+                    cand_seq_cmp = _vowel_seq_for_compare(cand_norm_strict)
                     if not _seq_ok(base_seq_cmp, cand_seq_cmp, VAR_LIMIT):
                         if DEBUG_VALIDATION:
                             logger.info(f"    REJECT seq: base={base_seq_str} cand={'-'.join(cand_seq_cmp)}")
                         continue
 
+                    # --- Normalisierung für Kandidaten in strenger Phase ---
+                    cand_norm_strict = normalize_er_schwa(core)
+                    
                     # --- Erste-Vokal-Länge muss mit der des Basisworts übereinstimmen (falls bekannt) ---
                     if base_first_len in ("short", "long"):
-                        cand_first_len = _first_vowel_length(c)
+                        cand_first_len = _first_vowel_length(cand_norm_strict)
                         if cand_first_len != base_first_len:
                             if DEBUG_VALIDATION:
                                 logger.info(f"    REJECT len: base={base_first_len} cand={cand_first_len} word={c}")
@@ -1634,7 +1770,8 @@ AUSGABE:
 
             # --- Optional: Sortierung nach Hamming-Distanz (beste zuerst) ---
             def _score_by_seq(cand: str):
-                cseq = _vowel_seq_for_compare(cand)
+                core = _last_content_token(cand)
+                cseq = _vowel_seq_for_compare(core)
                 return _hamming(base_seq_cmp, cseq)  # 0 (perfekt) vor 1 vor 2 ...
 
             valid_candidates.sort(key=_score_by_seq)
@@ -1660,7 +1797,8 @@ AUSGABE:
 
             # --- Optional: Sortierung nach Hamming-Distanz (beste zuerst) ---
             def _score_by_seq(cand: str):
-                return _hamming(base_seq_cmp, _vowel_seq_for_compare(cand))
+                core = _last_content_token(cand)
+                return _hamming(base_seq_cmp, _vowel_seq_for_compare(core))
 
             valid_candidates.sort(key=_score_by_seq)  # 0-Fehler vor 1-Fehler vor 2-Fehler
 
