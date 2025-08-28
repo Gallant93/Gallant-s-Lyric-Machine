@@ -45,7 +45,7 @@ def parse_json_safely(text: str):
         # Häufige Markdown-Reste raus
         cleaned = cleaned.replace("```json", "").replace("```", "").strip()
 
-        # Nur das „echte“ JSON heraus schneiden
+        # Nur das „echte" JSON heraus schneiden
         start = cleaned.find("{")
         end = cleaned.rfind("}")
         if start == -1 or end == -1 or end <= start:
@@ -414,10 +414,8 @@ except NameError:
         r'(aa|ee|oo|uu|ää|öö|üü|ie|ei|ai|au|eu|äu|oi|ui|[aeiouäöüy])',
         _re.IGNORECASE
     )
-try:
-    _DEF_CONS
-except NameError:
-    _DEF_CONS = "bcdfghjklmnpqrstvwxyzß"
+
+_DEF_CONS = set("bcdfghjklmnpqrstvwxyzß")
 
 def _last_vowel_cluster(word: str):
     w = (word or "").strip().lower()
@@ -1538,6 +1536,11 @@ def find_rhymes_endpoint():
             core_rule_hint  = ""
             core_selfcheck  = "False"   # Platzhalter -> fällt im Prompt als Bedingung faktisch weg
 
+        # --- Präfix-Verbot (Heuristik) vorbereiten ---
+        forbidden_prefix = get_forbidden_prefix(input_word)
+        forbidden_literal = normalize_letters(input_word)
+        ban_prefix_rule = f"10) **Präfix-Verbot:** Kein Kandidat darf mit '{forbidden_prefix}' oder '{forbidden_literal}' beginnen."
+
         creative_prompt = f"""
 Du bist ein deutscher Reim-Coach. Erzeuge starke, natürliche Reimkandidaten für „{input_word}".
 
@@ -1547,7 +1550,7 @@ REGELN (unbedingt einhalten):
 3) **Vokalspur**: Folge der Sequenz **`{base_seq_str}`** (nur Vokalfamilien; „**er**" in Koda zählt als **a**). **Erster** und **letzter** Vokal müssen identisch sein; **innere** Abweichungen max. **{GEN_VAR_LIMIT}**.
 3a) **Endmuster-Hinweis**: Bei letztem Vokal **`e`** nutze bevorzugt Endungen wie `-ade`, `-age`, `-ale`, `-ase`, `-ate`, `-ame`; vermeide `-and`, `-ant`, `-ank`, `-anz`.
 3b) **Erste Vokal-Länge:** **{base_first_len}** wie im Ausgangswort (keine Dehnung; kein "oh/oo" wenn **kurz**).
-    (Beispiel nur zur Klang-Form, nicht übernehmen: Bei `o-e-a-e` wären Formen wie „…fassade“, „…anlage“ klanglich passend.)
+    (Beispiel nur zur Klang-Form, nicht übernehmen: Bei `o-e-a-e` wären Formen wie „…fassade", „…anlage" klanglich passend.)
 4) **Vokal-Anker (Familie/Längenklasse)**:
    - **Erster Vokal**: Familie={first_vowel_family}, Länge={first_vowel_length} – muss übereinstimmen.
    - **Letzter Vokal**: Familie={last_vowel_family}, Länge={last_vowel_length} – muss übereinstimmen.
@@ -1563,6 +1566,7 @@ REGELN (unbedingt einhalten):
    - beim **ersten** oder **letzten** Vokal die **Vokalfamilie/Längenklasse** ändert,
    - {core_selfcheck},
    - oder offensichtlich kein deutsches Wort/keine plausible Phrase ist.
+{ban_prefix_rule}
 
 AUSGABE:
 - Liefere **bis zu {MAX_RESULTS}** hochwertige, unterschiedliche Kandidaten.
@@ -1658,6 +1662,18 @@ AUSGABE:
                 
                 # Finale Prüfung mit der jetzt sauberen Phrase
                 if not cleaned_line or ':' in cleaned_line:
+                    continue
+
+                # --- Harte Präfix-Sperre (früh verwerfen) ---
+                cand = cleaned_line.strip()
+                cl = normalize_letters(cand)
+                if forbidden_prefix and cl.startswith(forbidden_prefix):
+                    if DEBUG_VALIDATION:
+                        logger.info(f"    REJECT ban_prefix: cand='{cand}' prefix='{forbidden_prefix}'")
+                    continue
+                if forbidden_literal and cl.startswith(forbidden_literal):
+                    if DEBUG_VALIDATION:
+                        logger.info(f"    REJECT ban_literal: cand='{cand}' literal='{forbidden_literal}'")
                     continue
 
                 # 1) Phrase-Core bestimmen
