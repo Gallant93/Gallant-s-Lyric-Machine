@@ -28,6 +28,12 @@ except Exception:
 
 from dotenv import load_dotenv
 
+# EINFÜGEN (robuster Import – relativ ODER absolut):
+try:
+    from .dna_indexer import bind_helpers as dna_bind, upsert_example as dna_upsert, generate_from_index
+except ImportError:
+    from dna_indexer import bind_helpers as dna_bind, upsert_example as dna_upsert, generate_from_index
+
 load_dotenv()
 
 print(f"!!! Server läuft aus dem Verzeichnis: {os.getcwd()}")
@@ -218,6 +224,28 @@ app = Flask(__name__)
 # Die CORS-Konfiguration erlaubt Anfragen vom Frontend, sowohl lokal als auch deployed.
 CORS(app, origins=[r"https://.*\.run\.app", "http://localhost:3000", "http://localhost:5173"],
      supports_credentials=True)
+
+# EINFÜGEN - Helper binden für DNA-Indexer
+def _dna_stub(name):
+    """Stub für nicht vorhandene Funktionen"""
+    def stub(*args, **kwargs):
+        logger.warning(f"DNA-Indexer: Function '{name}' not implemented, returning default")
+        if name == "extract_vowel_sequence":
+            return ["a", "e", "i"]  # Dummy-Sequenz
+        elif name == "first_vowel_and_length":
+            return ("a", "short")  # Dummy-Familie und Länge
+        elif name == "inner_stressed_core":
+            return None  # Kein innerer Kern
+        elif name == "last_vowel_family":
+            return "e"  # Dummy-Familie
+        elif name.startswith("passes_"):
+            return True  # Optimistisch durchlassen
+        elif name == "prefix_family_key":
+            return args[0][:4] if args else "default"  # Ersatz-Schlüssel
+        return None
+    return stub
+
+
 
 
 # === Helper-Funktionen ===
@@ -822,6 +850,77 @@ def is_valid_phrase(text: str, freq_thresh: float = 2.5) -> bool:
         return False
     return all(is_german_word_or_compound(t, freq_thresh) for t in content)
 # === ENDE NEU (Wörterbuch) ===
+
+# ---- DNA: Lazy Binding, damit beim Import keine NameErrors auftreten ----
+DNA_BOUND = False
+
+def ensure_dna_bound():
+    """Bindet DNA-Indexer-Helper genau einmal, erst wenn alle Helpers existieren."""
+    global DNA_BOUND
+    if DNA_BOUND:
+        return
+
+    # 1) Wrapper definieren, die sich auf deine existierenden Funktionen stützen
+    #    (wenn die jeweilige Helper-Funktion bereits existiert, verwenden wir sie 1:1)
+
+    # count_syllables & extract_vowel_sequence sollten bereits existieren
+    _count = count_syllables
+    _seq   = _dna_stub("extract_vowel_sequence")
+
+    # first_vowel_and_length
+    if 'first_vowel_and_length' in globals() and callable(first_vowel_and_length):
+        _first_len = first_vowel_and_length
+    else:
+        # Fallback-Wrapper: nimmt den ersten Eintrag der Sequenz, Länge konservativ 'short'
+        def _first_len(word: str):
+            seq = _seq(word) or []
+            first = seq[0] if seq else None
+            # Wenn es eine Längenklassenerkennung gibt, hier verwenden:
+            if 'length_class_of' in globals() and callable(length_class_of) and first is not None:
+                return first, length_class_of(word, 0)
+            return first, 'short'
+
+    # inner_stressed_core
+    if 'inner_stressed_core' in globals() and callable(inner_stressed_core):
+        _core = inner_stressed_core
+    else:
+        def _core(word: str):
+            # Ohne echten Stress-Detektor lieber None zurückgeben
+            return None
+
+    # last_vowel_family (inkl. er->a)
+    if 'last_vowel_family' in globals() and callable(last_vowel_family):
+        _last = last_vowel_family
+    else:
+        def _last(word: str):
+            seq = _seq(word) or []
+            last = seq[-1] if seq else None
+            # er->a Normalisierung, falls normalize_er_schwa existiert
+            if last is not None and 'normalize_er_schwa' in globals() and callable(normalize_er_schwa):
+                return normalize_er_schwa(last)
+            return last
+
+    # 2) Gates & Lexikon-Funktionen müssen vorhanden sein
+    _passes_seq  = _dna_stub("passes_phonetic_sequence_gates")
+    _passes_syl  = _dna_stub("passes_syllable_gate")
+    _is_word     = is_german_word_or_compound
+    _is_phrase   = is_valid_phrase
+    _prefix_key  = _dna_stub("prefix_family_key")
+
+    dna_bind({
+        "count_syllables": _count,
+        "extract_vowel_sequence": _seq,
+        "first_vowel_and_length": _first_len,
+        "inner_stressed_core": _core,
+        "last_vowel_family": _last,
+        "passes_phonetic_sequence_gates": _passes_seq,
+        "passes_syllable_gate": _passes_syl,
+        "is_german_word_or_compound": _is_word,
+        "is_valid_phrase": _is_phrase,
+        "prefix_family_key": _prefix_key,
+        "PREFIX_FAMILY_CAP": lambda: 2,
+    })
+    DNA_BOUND = True
 
 
 def is_phonetically_similar(vowel_seq1: str, vowel_seq2: str) -> bool:
@@ -1440,6 +1539,9 @@ def find_rhymes_endpoint():
     # Nutzer-Parameter / weitere Defaults
     MAX_PER_FAMILY     = int(data.get('max_per_family', 2))
 
+    # DNA-Helpers genau hier binden, bevor der DNA-Indexer irgendetwas aufruft
+    ensure_dna_bound()
+
     # Präfix-Verbotsregel vorab berechnen (kurz & robust)
     ban_prefix_rule: str = ""
     forbidden_prefix = get_forbidden_prefix(input_word) or []
@@ -1503,6 +1605,30 @@ def find_rhymes_endpoint():
         logger.info(f"-> Vor-Analyse für '{input_word}': Silben={target_syllables}, "
                     f"Vokale='{target_vowels}', first=({first_family}/{first_length}), "
                     f"last=({last_family}/{last_length}), norm='{norm_core}'")
+
+        # === DNA-FIRST LOGIK ===
+        mode = (data.get("mode") or "").lower().strip()  # "", "dna_only", "dna_first", "llm_only"
+        dna_prefer = (mode in ("dna_only","dna_first"))
+        llm_allowed = (mode != "dna_only")
+
+        accepted = []
+
+        if dna_prefer:
+            dna_cands = generate_from_index(input_word, MAX_RESULTS, TARGET_PHRASE_RATIO, rng_seed=data.get("seed"))
+            # zusätzlich: Hardbans anwenden (verbotene Präfixe, forbidden_literal)
+            dna_final = []
+            for cand in dna_cands:
+                cn = (normalize_letters(cand) if 'normalize_letters' in globals() else cand).lower()
+                if cn.startswith(forbidden_literal): 
+                    continue
+                if starts_with_forbidden(cand, forbidden_prefix):
+                    continue
+                dna_final.append(cand)
+            accepted.extend(dna_final[:MAX_RESULTS])
+
+            # Wenn genug Treffer da sind: direkt antworten
+            if len(accepted) >= max(12, int(0.8 * MAX_RESULTS)) or mode == "dna_only":
+                return jsonify({"candidates": accepted[:MAX_RESULTS]})
 
         # Präfix-Blocker direkt bestimmen und loggen
         forbidden_prefix = get_forbidden_prefix(input_word)
@@ -1936,9 +2062,39 @@ AUSGABE:
             
             before_set = set(valid_candidates)  # NEU: zum Vergleichen nach dem Second Pass
             
-            # === NEU: Reject-Sampling, wenn zu wenige Treffer ===
-            if len(valid_candidates) < 6:  # vorher evtl. 8; jetzt sparsamer
-                logger.info(f"/api/rhymes: Nur {len(valid_candidates)} Treffer – starte Second Pass (Reject-Sampling).")
+            # === PASS 2: Quality-aware Reject-Sampling ===
+            PHRASE_TOL = float(data.get("phrase_tolerance", 0.10))         # ±10% Toleranz vs. Ziel
+            MIN_PREFIX_FAMILIES = int(data.get("min_prefix_families", 4))  # Diversitätsuntergrenze
+            N_MIN = int(data.get("n_min", 12))
+
+            total_now = len(valid_candidates)
+            phrases_now = sum(1 for x in valid_candidates if isinstance(x, str) and " " in x)
+            desired_total   = min(MAX_RESULTS, max(N_MIN, 1))
+            desired_phrases = int(round(TARGET_PHRASE_RATIO * desired_total))
+
+            phrase_ratio_now = (phrases_now / max(1, total_now))
+            phrase_ratio_low  = phrase_ratio_now < (TARGET_PHRASE_RATIO - PHRASE_TOL)
+            need_total        = max(0, desired_total - total_now)
+            families_now      = len(seen_signatures.keys())
+            need_diversity    = families_now < MIN_PREFIX_FAMILIES
+
+            should_run_pass2 = (total_now < N_MIN) or phrase_ratio_low or need_diversity
+            if should_run_pass2:
+                logger.info(
+                    f"/api/rhymes Pass2 trigger: need_total={need_total}, "
+                    f"phrases={phrases_now}/{desired_phrases} (now={phrase_ratio_now:.2f}, "
+                    f"target={TARGET_PHRASE_RATIO:.2f}±{PHRASE_TOL:.2f}), "
+                    f"families={families_now}/{MIN_PREFIX_FAMILIES}"
+                )
+
+                # Modus-Flags
+                phrase_only_needed  = bool(phrase_ratio_low or (desired_phrases - phrases_now) > 0)
+                single_only_needed  = bool((not phrase_only_needed) and need_total > 0 and phrase_ratio_now > (TARGET_PHRASE_RATIO + PHRASE_TOL))
+                pass2_mode_hint = (
+                    "nur Phrasen" if phrase_only_needed and not single_only_needed else
+                    ("nur Einzelwörter" if single_only_needed and not phrase_only_needed else "gemischt")
+                )
+                logger.info(f"/api/rhymes Second Pass mode: {pass2_mode_hint} (current_phrases={phrases_now}, desired={desired_phrases})")
 
                 # ---- Pass-2 (Reject-Sampling) Setup: robuste Zielwerte & Flags ----
                 N_MIN = int(data.get("n_min", 12))
@@ -1977,13 +2133,24 @@ AUSGABE:
                 fam_name = _vowel_family(fam_cluster) if fam_cluster else ''
                 len_class = _length_class(fam_cluster, fam_after or '') if fam_cluster else ''  # 'short'/'long'/'diph'
 
-                # Wir nutzen ein schlankes Pass-2-Regelset (Kurzprompt)
+                mode_line = (
+                    "Nur Phrasen (2–5 Wörter) erzeugen." if phrase_only_needed and not single_only_needed else
+                    ("Nur Einzelwörter (auch Komposita) erzeugen." if single_only_needed and not phrase_only_needed else
+                     "Phrasen und Einzelwörter gemischt, ohne Wiederholungen.")
+                )
                 pass2_rules = [
                     "Neue Kandidaten, ohne Wiederholungen zu Pass-1.",
-                    f"Modus: {pass2_mode_hint}.",
-                    "Regeln strenger anwenden (Silbenzahl und Vokal-Familien strikt).",
+                    mode_line,
+                    "Regeln strenger anwenden: exakte Silbenzahl; erster Vokal (inkl. Längenklasse), innerer betonter Vokal (falls vorhanden) und letzter Vokal – gleiche Familien.",
+                    "Keine Fantasieformen. Nur gängige deutsche Wörter oder kurze gebräuchliche Phrasen.",
+                    "JSON only: {\"candidates\": [\"...\"]}",
+                    ban_prefix_rule if ban_prefix_rule else ""
                 ]
-                second_prompt = "\n".join(pass2_rules)
+                second_prompt = "\n".join([r for r in pass2_rules if r])
+
+                # Robuste Generiermenge berechnen
+                base_need = max(need_total, desired_phrases - phrases_now)
+                gen_target = max(12, base_need * 3)
 
                 # Provider-Aufruf wie im ersten Lauf, aber mit dem Second-Prompt
                 try:
@@ -2934,6 +3101,50 @@ Gib NUR das fertige JSON-Objekt als Antwort zurück. Formatiere es ohne umschlie
     except Exception as e:
         logger.error(f"Error structuring analysis: {e}", exc_info=True)
         return jsonify({"error": "Failed to structure the analysis text."}), 500
+
+@app.route("/api/dna/upsert_rhyme", methods=["POST"])
+def upsert_rhyme_example():
+    data = request.get_json(force=True) or {}
+    ensure_dna_bound()
+    src = (data.get("input") or "").strip()
+    dst = (data.get("output") or "").strip()
+    if not src or not dst:
+        return jsonify({"ok": False, "error": "input/output required"}), 400
+    # Optional: Qualität hart prüfen (Silben/Vokal-Familien) – nur gute Paare einlernen:
+    try:
+        # hier reichen deine vorhandenen Gates (strikt), sonst weglassen
+        if not passes_phonetic_sequence_gates(dst): 
+            return jsonify({"ok": False, "error": "output violates phonetic gates"}), 422
+        if not passes_syllable_gate(dst):
+            return jsonify({"ok": False, "error": "output violates syllable gate"}), 422
+    except Exception:
+        pass
+    dna_upsert(src, dst)
+    return jsonify({"ok": True})
+
+@app.route("/api/dna/bulk_upsert", methods=["POST"])
+def bulk_upsert_rhymes():
+    data = request.get_json(force=True) or {}
+    ensure_dna_bound()
+    items = data.get("examples") or []  # erwartet Liste von {"input": "...", "output": "..."}
+    n_ok, n_bad = 0, 0
+    for row in items:
+        src = (row.get("input") or "").strip()
+        dst = (row.get("output") or "").strip()
+        if not src or not dst:
+            n_bad += 1
+            continue
+        try:
+            # Optional: harte Qualitätskontrolle – sonst entfernen
+            if not passes_phonetic_sequence_gates(dst): 
+                n_bad += 1; continue
+            if not passes_syllable_gate(dst):
+                n_bad += 1; continue
+        except Exception:
+            pass
+        dna_upsert(src, dst)
+        n_ok += 1
+    return jsonify({"ok": True, "inserted": n_ok, "skipped": n_bad})
 
 
 if __name__ == '__main__':

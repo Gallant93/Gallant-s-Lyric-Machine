@@ -250,7 +250,8 @@ const RhymeModal = ({ isOpen, onClose, targetWord, onSelectRhyme, getKnowledgeBa
                 max_results: 20,
                 target_phrase_ratio: 0.35,
                 max_words: 8,
-                debug_validation: true
+                debug_validation: true,
+                mode: "dna_first"  // DNA zuerst versuchen, LLM als Fallback
             };
             const response = await fetch(`${BACKEND_URL}/api/rhymes`, {
                 method: 'POST',
@@ -1148,7 +1149,8 @@ const App = () => {
             max_results: 20,
             target_phrase_ratio: 0.35,
             max_words: 8,
-            debug_validation: true
+            debug_validation: true,
+            mode: "dna_first"  // DNA zuerst versuchen, LLM als Fallback
         };
 
         const rhymeResponse = await fetch(`${BACKEND_URL}/api/rhymes`, {
@@ -1275,7 +1277,18 @@ const handleSaveRhymeLesson = () => {
         let currentLibrary = [...library];
         
         // Führe die Speicherlogik für jeden einzelnen Reim aus
-        rhymesToSave.forEach(rhyme => {
+        rhymesToSave.forEach(async (rhyme) => {
+            // DNA-Upsert: Reim-Paar an Backend senden
+            try {
+                await fetch(`${BACKEND_URL}/api/dna/upsert_rhyme`, {
+                    method: "POST",
+                    headers: {"Content-Type":"application/json"},
+                    body: JSON.stringify({ input: lessonWord, output: rhyme })
+                });
+            } catch (error) {
+                console.warn('DNA-Upsert fehlgeschlagen:', error);
+            }
+
             const existingGroup = currentLibrary.find(item => item.type === 'rhyme_lesson_group' && (item as RhymeLessonGroup).targetWord === lessonWord) as RhymeLessonGroup | undefined;
 
             if (existingGroup) {
@@ -1310,10 +1323,75 @@ const handleSaveRhymeLesson = () => {
     setLessonRhyme('');
 };
 
+// Migration: Bestehende Rhyme Lessons ins DNA-System übertragen
+const handleMigrateExistingRhymes = async () => {
+    const profile = getCurrentProfile();
+    if (!profile || !profile.library) {
+        showStatus("Keine Profildaten für Migration gefunden.", true);
+        return;
+    }
+
+    // Sammle alle vorhandenen RhymeLessonGroups
+    const rhymeLessonGroups = profile.library.filter(item => item.type === 'rhyme_lesson_group') as RhymeLessonGroup[];
+    
+    if (rhymeLessonGroups.length === 0) {
+        showStatus("Keine Reim-Lektionen für Migration gefunden.", false);
+        return;
+    }
+
+    // Erstelle flache Liste aller Reim-Paare
+    const allPairs: Array<{input: string, output: string}> = [];
+    rhymeLessonGroups.forEach(group => {
+        group.rhymes.forEach(rhyme => {
+            allPairs.push({
+                input: group.targetWord,
+                output: rhyme.rhymingWord
+            });
+        });
+    });
+
+    if (allPairs.length === 0) {
+        showStatus("Keine Reim-Paare für Migration gefunden.", false);
+        return;
+    }
+
+    try {
+        showStatus(`Migriere ${allPairs.length} Reim-Paare ins DNA-System...`, false);
+        
+        const response = await fetch(`${BACKEND_URL}/api/dna/bulk_upsert`, {
+            method: "POST",
+            headers: {"Content-Type":"application/json"},
+            body: JSON.stringify({ examples: allPairs })
+        });
+
+        if (!response.ok) {
+            throw new Error(`Migration fehlgeschlagen: ${response.status}`);
+        }
+
+        const result = await response.json();
+        showStatus(`Migration erfolgreich: ${result.inserted} Paare eingefügt, ${result.skipped} übersprungen.`, false);
+        
+    } catch (error) {
+        console.error('Migration error:', error);
+        showStatus(`Migration fehlgeschlagen: ${error.message}`, true);
+    }
+};
+
 const handleSaveSingleRhyme = (targetWord: string, newRhyme: string) => {
     updateProfileLibrary(library => {
         let currentLibrary = [...library];
         const existingGroup = currentLibrary.find(item => item.type === 'rhyme_lesson_group' && (item as RhymeLessonGroup).targetWord === targetWord) as RhymeLessonGroup | undefined;
+
+        // DNA-Upsert: Reim-Paar an Backend senden
+        try {
+            fetch(`${BACKEND_URL}/api/dna/upsert_rhyme`, {
+                method: "POST",
+                headers: {"Content-Type":"application/json"},
+                body: JSON.stringify({ input: targetWord, output: newRhyme })
+            }).catch(error => console.warn('DNA-Upsert fehlgeschlagen:', error));
+        } catch (error) {
+            console.warn('DNA-Upsert fehlgeschlagen:', error);
+        }
 
         if (existingGroup) {
             // Gruppe existiert: Füge neuen Reim hinzu, falls noch nicht vorhanden
@@ -3650,7 +3728,10 @@ const renderRhymeMachineView = () => (
                         onChange={e => setLessonRhyme(e.target.value)}
                     />
                 </div>
-                <button className="secondary-action-button align-start" onClick={handleSaveRhymeLesson}>Lektion zur DNA hinzufügen</button>
+                <div className="rhyme-lesson-buttons">
+                    <button className="secondary-action-button align-start" onClick={handleSaveRhymeLesson}>Lektion zur DNA hinzufügen</button>
+                    <button className="tertiary-action-button align-start" onClick={handleMigrateExistingRhymes}>Alle bestehenden Reime migrieren</button>
+                </div>
             </div>
 
             {/* Das erste Feature von vorher, jetzt an zweiter Stelle */}
