@@ -1420,20 +1420,45 @@ def find_rhymes_endpoint():
         return "long"
 
     logger.info(">>> /api/rhymes LOADED (patch v1)")
+    # === Request-Parsing & Defaults (robust) ===
     try:
-        data = request.get_json()
-        input_word = data.get('input_word') or data.get('input')
-        knowledge_base = data.get('knowledge_base', 'Keine DNA vorhanden.')
-        max_words = int(data.get('max_words', 50))
-        N_MIN = int(data.get('min_results', 20))  # NEU: Mindestanzahl gewünschter Treffer
-        DEBUG_VALIDATION = bool(data.get('debug', False))  # NEU: Detail-Logs (ablehnungsgründe)
-        phrase_only_needed = bool(data.get('phrase_only', False))  # NEU: Nur Phrasen generieren
+        data = request.get_json(force=True) or {}
+    except Exception:
+        data = {}
 
-        # Nutzer-Parameter / Defaults
-        TARGET_PHRASE_RATIO = float(data.get('target_phrase_ratio', 0.30))
-        MAX_PER_FAMILY     = int(data.get('max_per_family', 2))
-        MAX_RESULTS        = int(data.get('max_results', 20))
+    input_word: str = (data.get("input") or data.get("word") or "").strip()
+    if not input_word:
+        return jsonify({"error": "Missing 'input'"}), 400
 
+    knowledge_base = data.get('knowledge_base', 'Keine DNA vorhanden.')
+    # Kontrakt: UPPER-Namen werden in der Funktion weiterverwendet
+    MAX_RESULTS: int = int(data.get("max_results", 20))
+    TARGET_PHRASE_RATIO: float = float(data.get("target_phrase_ratio", 0.35))
+    max_words: int = int(data.get("max_words", 8))
+    DEBUG_VALIDATION: bool = bool(data.get("debug_validation", False))
+
+    # Nutzer-Parameter / weitere Defaults
+    MAX_PER_FAMILY     = int(data.get('max_per_family', 2))
+
+    # Präfix-Verbotsregel vorab berechnen (kurz & robust)
+    ban_prefix_rule: str = ""
+    forbidden_prefix = get_forbidden_prefix(input_word) or []
+    if forbidden_prefix:
+        quoted = ", ".join([f'"{p}"' for p in forbidden_prefix])
+        ban_prefix_rule = (
+            f"10) Verbotene Präfixe: {quoted}. Keine Kandidaten dürfen damit beginnen."
+        )
+
+    # --- Literal-Input-Stamm (zusätzlicher Hartfilter gegen Near-Duplicates) ---
+    try:
+        forbidden_literal = (
+            normalize_letters(input_word) if 'normalize_letters' in globals() else input_word
+        ).lower()
+    except Exception:
+        forbidden_literal = (input_word or "").lower()
+
+    # Nachfolgender Block war zuvor eingerückt; kapseln, damit Struktur konsistent bleibt
+    if True:
         # Strenge Toleranz NUR für den Validator (Hamming-Distanz)
         VAR_LIMIT = int(data.get("var_limit", 1))  # 1 bleibt hart
 
@@ -1588,11 +1613,12 @@ def find_rhymes_endpoint():
             core_rule_hint  = ""
             core_selfcheck  = "False"   # Platzhalter -> fällt im Prompt als Bedingung faktisch weg
 
-        # --- Präfix-Regel (kurz & billig) vorbereiten ---
-        prefix_rule = ""
-        if forbidden_prefix:
-            joined = ", ".join(f'"{p}"' for p in forbidden_prefix)
-            prefix_rule = f"8) **Kein Kandidat darf mit folgenden Präfixen beginnen:** {joined}."
+        # --- Prefix-Diversity (weiche Kappung) vorbereiten ---
+        PREFIX_FAMILY_CAP: int = int(data.get("prefix_family_cap", 2))
+        prefix_rule: str = (
+            f"11) Präfix-Diversität: Pro Präfix-Familie max. {PREFIX_FAMILY_CAP} Kandidaten "
+            f"(z. B. 'ab-', 'ver-', 'sonnen-')."
+        )
 
         creative_prompt = f"""
 Du bist ein deutscher Reim-Coach. Erzeuge starke, natürliche Reimkandidaten für „{input_word}".
@@ -1613,7 +1639,7 @@ REGELN (unbedingt einhalten):
 5) **Letzte Silbe**: Behalte den **Nukleus** (Vokalfamilie wie oben). Die **Koda** soll in einer **ähnlichen Koda-Familie** liegen ({last_coda_family_hint}). Kleine stimmhaft/stimmlos-Wechsel in **derselben Artikulationsstelle** sind ok (z. B. d/t, s/z). **Kein Wechsel der Vokalfamilie.**
 6) **Deutsch**: Nur echte deutsche Wörter oder sehr plausible Komposita/Mehrwortphrasen.
 7) **Vielfalt**: Keine Serien gleicher Präfixe (max. 2 Kandidaten mit identischem Anfang). Keine Fantasieendungen.
-{prefix_rule}
+{ban_prefix_rule}
 8) **Phrasenanteil**: **{target_phrase_pct}% Mehrwortphrasen (2–5 Wörter)**, der Rest **Einwortkandidaten**.
 9) **Selbstcheck vor Ausgabe**: Entferne jeden Kandidaten, der
    - nicht exakt {base_syllables} Silben hat,
@@ -1687,6 +1713,7 @@ AUSGABE:
 
             # Post-Processing direkt hier durchführen
             valid_candidates = []
+            prefix_counts = {}
             # NEU: Robuste Schleife, die "Junk"-Wörter UND KI-Kommentare ignoriert
             
             # NEU: Robuste Schleife, die "Junk"-Wörter UND KI-Kommentare ignoriert
@@ -1728,15 +1755,18 @@ AUSGABE:
                 if not cleaned_line or ':' in cleaned_line:
                     continue
 
-                # --- Harte Präfix-Sperre (früh verwerfen) ---
+                # --- Hardban: literaler Stamm + Präfixliste ---
                 cand = cleaned_line.strip()
+                cand_norm = (normalize_letters(cand) if 'normalize_letters' in globals() else cand).lower()
+                # 2a) literal gleicher Anfang wie das Ausgangswort
+                if cand_norm.startswith(forbidden_literal):
+                    if DEBUG_VALIDATION:
+                        logger.info(f"    REJECT forbidden_literal: {cand}")
+                    continue
+                # 2b) konfigurierter Präfix-Ban (z. B. 'polter-')
                 if starts_with_forbidden(cand, forbidden_prefix):
                     if DEBUG_VALIDATION:
                         logger.info(f"    REJECT ban_prefix: cand='{cand}' prefixes={forbidden_prefix}")
-                    continue
-                if forbidden_literal and normalize_letters(cand).startswith(forbidden_literal):
-                    if DEBUG_VALIDATION:
-                        logger.info(f"    REJECT ban_literal: cand='{cand}' literal='{forbidden_literal}'")
                     continue
 
                 # 1) Phrase-Core bestimmen
@@ -1794,11 +1824,23 @@ AUSGABE:
                     if not is_german_word_or_compound(cleaned_line):
                         continue
 
+                # Diversity-Cap je Präfix-Familie
+                key = prefix_family_key(cleaned_line) if 'prefix_family_key' in globals() else normalize_letters(cleaned_line)[:4]
+                if prefix_counts.get(key, 0) >= PREFIX_FAMILY_CAP:
+                    if DEBUG_VALIDATION:
+                        logger.info(f"    REJECT prefix_diversity[{key}]: {cleaned_line}")
+                    continue
+                prefix_counts[key] = prefix_counts.get(key, 0) + 1
                 valid_candidates.append(cleaned_line)
 
             valid_candidates = list(dict.fromkeys(valid_candidates))[:20]
 
             logger.info(f"--> Schritt 2: Post-Processing")
+            if DEBUG_VALIDATION:
+                try:
+                    app.logger.info(f"prefix_counts={prefix_counts}")
+                except Exception:
+                    pass
             logger.info(f"    - {len(valid_candidates)} valide Kandidaten aus der Antwort extrahiert.")
             logger.info(f"    - Extrahierte Kandidaten: {valid_candidates}")
 
@@ -1898,11 +1940,33 @@ AUSGABE:
             if len(valid_candidates) < 6:  # vorher evtl. 8; jetzt sparsamer
                 logger.info(f"/api/rhymes: Nur {len(valid_candidates)} Treffer – starte Second Pass (Reject-Sampling).")
 
-                # --- NEU: Falls zu wenig Phrasen, Pass 2 auf "nur Phrasen" stellen ---
-                need_phrases = (not phrase_only_needed) and (TARGET_PHRASE_RATIO > 0.0)
-                current_phrases = sum(1 for x in valid_candidates if ' ' in x)  # 'valid_candidates' = Liste nach Pass 1
-                need_phrase_only_mode = need_phrases and (current_phrases < int(round(TARGET_PHRASE_RATIO * MAX_RESULTS)))
-                logger.info(f"/api/rhymes Second Pass mode: {'phrases-only' if need_phrase_only_mode else 'mixed'} (current_phrases={current_phrases})")
+                # ---- Pass-2 (Reject-Sampling) Setup: robuste Zielwerte & Flags ----
+                N_MIN = int(data.get("n_min", 12))
+
+                accepted = accepted if 'accepted' in locals() else []
+                total_now = len(accepted)
+                phrases_now = sum(1 for x in accepted if isinstance(x, str) and " " in x)
+
+                desired_total = min(MAX_RESULTS, max(N_MIN, 1))
+                desired_phrases = int(round(TARGET_PHRASE_RATIO * desired_total))
+
+                need_total = max(0, N_MIN - total_now)
+                need_phrases = max(0, desired_phrases - phrases_now)
+
+                phrase_only_needed: bool = False
+                single_only_needed: bool = False
+                if need_phrases > 0:
+                    phrase_only_needed = True
+                if need_total > 0 and need_phrases == 0 and phrases_now >= desired_phrases:
+                    single_only_needed = True
+
+                if phrase_only_needed and not single_only_needed:
+                    pass2_mode_hint = "nur Phrasen"
+                elif single_only_needed and not phrase_only_needed:
+                    pass2_mode_hint = "nur Einzelwörter"
+                else:
+                    pass2_mode_hint = "gemischt"
+                logger.info(f"/api/rhymes Second Pass mode: {pass2_mode_hint} (current_phrases={phrases_now}, desired={desired_phrases})")
 
                 # Bisherige Reimfamilien (für Blacklist) + benutzte Wörter
                 banned_families = sorted(seen_signatures.keys())  # z.B. ['a|te', 'i|nd', ...]
@@ -1913,39 +1977,13 @@ AUSGABE:
                 fam_name = _vowel_family(fam_cluster) if fam_cluster else ''
                 len_class = _length_class(fam_cluster, fam_after or '') if fam_cluster else ''  # 'short'/'long'/'diph'
 
-                # Phrasenquote-Check für Second Pass
-                phrases = [c for c in valid_candidates if re.search(r"\s", c)]
-                phrase_only_needed = (len(phrases) < TARGET_PHRASE_RATIO * max(1, len(valid_candidates)))
-
-                # Wir nutzen dasselbe Schema wie im ersten Lauf (JSON-only mit candidates[])
-                # Für Second-Pass: höhere Toleranz (3 statt 2)
-                second_prompt = (
-                    f"{creative_prompt.replace('{GEN_VAR_LIMIT}', str(max(GEN_VAR_LIMIT, 3)))}\n\n"
-                    "ERGÄNZUNG (zweiter Lauf / Reject-Sampling):\n"
-                    f"- Erzeuge 40 NEUE Kandidaten.\n"
-                    f"- Vermeide strikt diese Reimfamilien (Kern|Koda): {', '.join(banned_families) if banned_families else '—'}\n"
-                    f"- Schließe diese Wörter strikt aus: {', '.join(banned_words) if banned_words else '—'}\n"
-                    f"- Halte die Regeln exakt ein (erste Vokalfamilie = '{_vowel_family(_first_vowel_cluster(input_word) or '')}', "
-                    f"Kern-Länge/Diphthong = '{len_class}', Schwa-Suffix = '{get_schwa_suffix(input_word)}').\n"
-                    f"- EXAKT {base_syllables} Silben pro Kandidat.\n"
-                    'ANTWORTFORMAT: Nur JSON-Objekt {"candidates": ["..."]}\n'
-                )
-
-                # Dynamische Phrasen-Anweisung basierend auf need_phrase_only_mode
-                if need_phrase_only_mode:
-                    second_prompt += (
-                        "\n- GIB AUSSCHLIESSLICH MEHRWORTPHRASEN (2–5 Wörter).\n"
-                        "- KEINE Einwort-Kandidaten.\n"
-                        "- Antworte NUR als JSON {\"candidates\": [\"...\"]}.\n"
-                        "- Keine Fantasieformen, keine Eigennamen.\n"
-                    )
-                else:
-                    target_phrase_pct = int(TARGET_PHRASE_RATIO * 100)
-                    second_prompt += (
-                        f"\n- Mindestens {target_phrase_pct}% Mehrwortphrasen (2–5 Wörter).\n"
-                        "(Bevorzuge bei Gleichstand Mehrwortphrasen (2–5 Wörter).)\n"
-                        "- Antworte NUR als JSON {\"candidates\": [\"...\"]}.\n"
-                    )
+                # Wir nutzen ein schlankes Pass-2-Regelset (Kurzprompt)
+                pass2_rules = [
+                    "Neue Kandidaten, ohne Wiederholungen zu Pass-1.",
+                    f"Modus: {pass2_mode_hint}.",
+                    "Regeln strenger anwenden (Silbenzahl und Vokal-Familien strikt).",
+                ]
+                second_prompt = "\n".join(pass2_rules)
 
                 # Provider-Aufruf wie im ersten Lauf, aber mit dem Second-Prompt
                 try:
@@ -1985,8 +2023,8 @@ AUSGABE:
                     line = (raw or "").strip()
                     reason = None  # NEU: Ablehnungsgrund (nur für Debug-Log)
                     
-                    # === NEU: "Nur Phrasen" hart (wenn need_phrase_only_mode=True) ===
-                    if need_phrase_only_mode and not re.search(r"\s", line):
+                    # === NEU: "Nur Phrasen" hart (wenn phrase_only_needed=True) ===
+                    if phrase_only_needed and not re.search(r"\s", line):
                         if debug_mode: rejected_reasons.append((line, "phrase_only"))
                         continue
                     # === ENDE NEU ===
@@ -2274,9 +2312,7 @@ AUSGABE:
             logger.error(f"Fehler bei kreativer Generierung: {e}")
             return jsonify({"error": str(e)}), 500
 
-    except Exception as e:
-        logger.error(f"Error in /api/rhymes: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
+    
 
 
 @app.route('/api/generate-rhyme-line', methods=['POST'])

@@ -245,11 +245,12 @@ const RhymeModal = ({ isOpen, onClose, targetWord, onSelectRhyme, getKnowledgeBa
         setError('');
         setRhymeResults([]);
         try {
-            const dnaResult = getKnowledgeBase();
             const rhymePayload = {
                 input: rhymeInput,
-                knowledgeBase: dnaResult.success ? dnaResult.knowledgeBase : null,
-                max_words: 8
+                max_results: 20,
+                target_phrase_ratio: 0.35,
+                max_words: 8,
+                debug_validation: true
             };
             const response = await fetch(`${BACKEND_URL}/api/rhymes`, {
                 method: 'POST',
@@ -1144,8 +1145,10 @@ const App = () => {
 
         const rhymePayload = {
             input: rhymeInput,
-            knowledgeBase: knowledgeBase, // Kann null sein, falls keine DNA vorhanden
-            max_words: 8
+            max_results: 20,
+            target_phrase_ratio: 0.35,
+            max_words: 8,
+            debug_validation: true
         };
 
         const rhymeResponse = await fetch(`${BACKEND_URL}/api/rhymes`, {
