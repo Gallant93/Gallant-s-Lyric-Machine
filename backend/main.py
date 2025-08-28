@@ -640,6 +640,54 @@ def count_syllables(word: str) -> int:
         return 1
 
 
+# --- Präfix-Blocker: verhindere Serien wie "Polter..." bei "Polterabend" ---
+_VOWELS_DE = "aeiouäöüyAEIOUÄÖÜY"
+
+def get_forbidden_prefix(word: str) -> list[str]:
+    """
+    Liefert eine kleine Menge an Startfolgen, mit denen KEIN Kandidat beginnen darf.
+    Heuristik:
+      - nimm das erste Token (vor Leer- oder Bindestrich)
+      - reduziere auf Buchstaben
+      - schneide vor dem Beginn der 2. Vokalkern-Gruppe ab (z.B. 'polter' | 'abend')
+      - generiere ein paar robuste Varianten (mit/ohne Bindestrich, ohne End-e)
+    """
+    import re
+
+    token = re.split(r"[\s\-]", word.strip(), maxsplit=1)[0].lower()
+    token = re.sub(r"[^a-zäöüß]", "", token)
+    if not token:
+        return []
+
+    # Vokalkerne finden
+    nuclei = [m.start() for m in re.finditer(rf"[{_VOWELS_DE}]+", token)]
+    if len(nuclei) >= 2:
+        prefix = token[:nuclei[1]]  # bis vor Beginn des 2. Kerns (z.B. 'polter')
+    else:
+        prefix = token
+
+    if len(prefix) < 4:  # zu kurz? bringt nichts zu blocken
+        return []
+
+    variants = {prefix, prefix + "-", prefix.rstrip("e"), prefix.rstrip("e") + "-"}
+    # Doppel-s/Deklination etc. sind hier egal – wir blocken nur Starts
+    return sorted(variants)
+
+
+def starts_with_forbidden(name: str, forbidden: list[str]) -> bool:
+    """
+    True, wenn 'name' mit einem der verbotenen Präfixe beginnt.
+    Bindestriche/Leerzeichen werden ignoriert (robust gegen Varianten).
+    """
+    import re
+    base = re.sub(r"[\s\-]+", "", name.lower())
+    for f in forbidden:
+        f_clean = re.sub(r"[\s\-]+", "", f.lower())
+        if f_clean and base.startswith(f_clean):
+            return True
+    return False
+
+
 _CONS_NORM = [
     ("sch", "sh"), ("tsch", "ch"), ("ck", "k"), ("tz", "z"), ("ph", "f"),
 ]
@@ -1430,6 +1478,10 @@ def find_rhymes_endpoint():
         logger.info(f"-> Vor-Analyse für '{input_word}': Silben={target_syllables}, "
                     f"Vokale='{target_vowels}', first=({first_family}/{first_length}), "
                     f"last=({last_family}/{last_length}), norm='{norm_core}'")
+
+        # Präfix-Blocker direkt bestimmen und loggen
+        forbidden_prefix = get_forbidden_prefix(input_word)
+        logger.info(f"Prefix-Blocker: {forbidden_prefix}")
         
         # NEU: Logging der Voranalyse
         logger.info(f"--> Schritt 0: Phonetik-Voranalyse (Python-Skript)")
@@ -1536,10 +1588,11 @@ def find_rhymes_endpoint():
             core_rule_hint  = ""
             core_selfcheck  = "False"   # Platzhalter -> fällt im Prompt als Bedingung faktisch weg
 
-        # --- Präfix-Verbot (Heuristik) vorbereiten ---
-        forbidden_prefix = get_forbidden_prefix(input_word)
-        forbidden_literal = normalize_letters(input_word)
-        ban_prefix_rule = f"10) **Präfix-Verbot:** Kein Kandidat darf mit '{forbidden_prefix}' oder '{forbidden_literal}' beginnen."
+        # --- Präfix-Regel (kurz & billig) vorbereiten ---
+        prefix_rule = ""
+        if forbidden_prefix:
+            joined = ", ".join(f'"{p}"' for p in forbidden_prefix)
+            prefix_rule = f"8) **Kein Kandidat darf mit folgenden Präfixen beginnen:** {joined}."
 
         creative_prompt = f"""
 Du bist ein deutscher Reim-Coach. Erzeuge starke, natürliche Reimkandidaten für „{input_word}".
@@ -1560,6 +1613,7 @@ REGELN (unbedingt einhalten):
 5) **Letzte Silbe**: Behalte den **Nukleus** (Vokalfamilie wie oben). Die **Koda** soll in einer **ähnlichen Koda-Familie** liegen ({last_coda_family_hint}). Kleine stimmhaft/stimmlos-Wechsel in **derselben Artikulationsstelle** sind ok (z. B. d/t, s/z). **Kein Wechsel der Vokalfamilie.**
 6) **Deutsch**: Nur echte deutsche Wörter oder sehr plausible Komposita/Mehrwortphrasen.
 7) **Vielfalt**: Keine Serien gleicher Präfixe (max. 2 Kandidaten mit identischem Anfang). Keine Fantasieendungen.
+{prefix_rule}
 8) **Phrasenanteil**: **{target_phrase_pct}% Mehrwortphrasen (2–5 Wörter)**, der Rest **Einwortkandidaten**.
 9) **Selbstcheck vor Ausgabe**: Entferne jeden Kandidaten, der
    - nicht exakt {base_syllables} Silben hat,
@@ -1621,6 +1675,16 @@ AUSGABE:
 
             logger.info(f"--> Extrahierte Kandidaten: {candidates!r}")
 
+            # --- Sofort-Filter: verbotene Präfixe direkt rauswerfen ---
+            if forbidden_prefix:
+                clean_candidates = []
+                for cand in candidates:
+                    if starts_with_forbidden(cand, forbidden_prefix):
+                        logger.debug(f"verworfen (Prefix): {cand}")
+                        continue
+                    clean_candidates.append(cand)
+                candidates = clean_candidates
+
             # Post-Processing direkt hier durchführen
             valid_candidates = []
             # NEU: Robuste Schleife, die "Junk"-Wörter UND KI-Kommentare ignoriert
@@ -1666,12 +1730,11 @@ AUSGABE:
 
                 # --- Harte Präfix-Sperre (früh verwerfen) ---
                 cand = cleaned_line.strip()
-                cl = normalize_letters(cand)
-                if forbidden_prefix and cl.startswith(forbidden_prefix):
+                if starts_with_forbidden(cand, forbidden_prefix):
                     if DEBUG_VALIDATION:
-                        logger.info(f"    REJECT ban_prefix: cand='{cand}' prefix='{forbidden_prefix}'")
+                        logger.info(f"    REJECT ban_prefix: cand='{cand}' prefixes={forbidden_prefix}")
                     continue
-                if forbidden_literal and cl.startswith(forbidden_literal):
+                if forbidden_literal and normalize_letters(cand).startswith(forbidden_literal):
                     if DEBUG_VALIDATION:
                         logger.info(f"    REJECT ban_literal: cand='{cand}' literal='{forbidden_literal}'")
                     continue
