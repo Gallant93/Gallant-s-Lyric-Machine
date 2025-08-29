@@ -251,7 +251,7 @@ const RhymeModal = ({ isOpen, onClose, targetWord, onSelectRhyme, getKnowledgeBa
                 target_phrase_ratio: 0.35,
                 max_words: 8,
                 debug_validation: true,
-                mode: "dna_first"  // DNA zuerst versuchen, LLM als Fallback
+
             };
             const response = await fetch(`${BACKEND_URL}/api/rhymes`, {
                 method: 'POST',
@@ -1150,7 +1150,7 @@ const App = () => {
             target_phrase_ratio: 0.35,
             max_words: 8,
             debug_validation: true,
-            mode: "dna_first"  // DNA zuerst versuchen, LLM als Fallback
+
         };
 
         const rhymeResponse = await fetch(`${BACKEND_URL}/api/rhymes`, {
@@ -1324,93 +1324,11 @@ const handleSaveRhymeLesson = () => {
 };
 
 // ---- Robust: Reim-Lektionen überall im Profil finden ----
-type AnyObj = Record<string, any>;
-type RhymePair = { input: string; output: string };
 
 
 
-function collectRhymeExamples(profile: AnyObj): { examples: RhymePair[]; debug: string } {
-  const examples: RhymePair[] = [];
-  const debugLines: string[] = [];
 
-  if (!profile || typeof profile !== "object") {
-    return { examples, debug: "kein Profil" };
-  }
 
-  // Suche direkt nach rhyme_lesson_group Objekten in der Bibliothek
-  const library = profile.library;
-  if (!Array.isArray(library)) {
-    return { examples, debug: "keine library gefunden" };
-  }
-
-  // Filtere rhyme_lesson_group Objekte
-  const rhymeGroups = library.filter(item => 
-    item && typeof item === "object" && item.type === 'rhyme_lesson_group'
-  );
-
-  debugLines.push(`gefunden: ${rhymeGroups.length} rhyme_lesson_group`);
-
-  // Extrahiere Reim-Paare
-  for (const group of rhymeGroups) {
-    const targetWord = group.targetWord;
-    const rhymes = group.rhymes;
-
-    if (!targetWord || !Array.isArray(rhymes)) {
-      continue;
-    }
-
-    for (const rhyme of rhymes) {
-      const rhymingWord = rhyme.rhymingWord;
-      if (rhymingWord && typeof rhymingWord === "string") {
-        examples.push({ input: targetWord, output: rhymingWord });
-      }
-    }
-  }
-
-  debugLines.push(`extrahiert: ${examples.length} Reim-Paare`);
-  return { examples, debug: debugLines.join(" | ") };
-}
-
-const handleMigrateClick = React.useCallback(() => {
-  if (!activeProfile) {
-    alert("Kein Profil geladen.");
-    return;
-  }
-  
-  migrateDnaToIndex(activeProfile as any);
-}, [activeProfile]);
-
-async function migrateDnaToIndex(profile: AnyObj) {
-  try {
-    const { examples, debug } = collectRhymeExamples(profile);
-    console.log("[DNA MIGRATE] debug:", debug);
-
-    if (!examples.length) {
-      alert("Keine Beispiele in der Künstler-DNA gefunden.\n(Debug: " + debug + ")");
-      return;
-    }
-
-    // KORRIGIERTE URL mit BACKEND_URL
-    const res = await fetch(`${BACKEND_URL}/api/dna/bulk_upsert`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ examples }),
-    });
-
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      console.error("bulk_upsert failed", res.status, json);
-      alert(`Migration fehlgeschlagen: ${json?.error ?? res.statusText}`);
-      return;
-    }
-
-    console.log("bulk_upsert ok", json);
-    alert(`Migration erfolgreich: ${json.inserted ?? 0} übernommen, ${json.skipped ?? 0} übersprungen.`);
-  } catch (err: any) {
-    console.error("bulk_upsert error", err);
-    alert(`Migration fehlgeschlagen: ${err?.message ?? String(err)}`);
-  }
-}
 
 
 
@@ -1554,27 +1472,22 @@ const getUnifiedKnowledgeBase = useCallback(() => {
     }
     
     // NEU: Berücksichtige nur die aktiv zur DNA hinzugefügten Reime
-    const activeRhymeIdsSet = new Set(activeRhymeDnaIds);
-    const learnedRhymeGroups = activeProfile.library.filter(
-        item => item.type === 'rhyme_lesson_group'
-    ) as RhymeLessonGroup[];
-
     // Baue den `knowledge`-String mit den aktiven Reimen auf
-    if (activeRhymeIdsSet.size > 0 && learnedRhymeGroups.length > 0) {
-        knowledge += "### EXPLIZITE REIM-LEKTIONEN (Vom Nutzer ausgewählte Beispiele für perfekte Reime) ###\n";
-        
-        learnedRhymeGroups.forEach(group => {
-            // Prüfe, ob die Gruppe rhymes hat und ob es ein Array ist
+    if (activeRhymeDnaIds.length > 0) {
+        knowledge += "### EXPLIZITE REIM-LEKTIONEN (Phonetische Muster für die Generierung) ###\n";
+        const rhymeGroups = sourceLibrary.filter(item => item.type === 'rhyme_lesson_group');
+
+        for (const group of rhymeGroups) {
             if (group.rhymes && Array.isArray(group.rhymes)) {
-                group.rhymes.forEach(rhyme => {
-                    // Füge den Reim nur hinzu, wenn seine ID im aktiven Set ist
-                    if (activeRhymeIdsSet.has(rhyme.id)) {
-                        knowledge += `- "${group.targetWord}" reimt sich perfekt auf "${rhyme.rhymingWord}".\n`;
+                for (const rhyme of group.rhymes) {
+                    if (rhyme.id && activeRhymeDnaIds.includes(rhyme.id)) {
+                        knowledge += `- Muster-Beispiel: "${group.targetWord}" reimt sich auf "${rhyme.rhymingWord}" (beide haben identische Vokalsequenz und Silbenzahl)\n`;
                     }
-                });
+                }
             }
-        });
-        knowledge += "\n";
+        }
+
+        knowledge += "REGEL: Generiere neue Kandidaten mit identischer Vokalsequenz und Silbenzahl wie das Eingabewort.\n\n";
     }
     
     if (userExplanations.length > 0) {
@@ -3767,14 +3680,7 @@ const renderRhymeMachineView = () => (
                 </div>
                 <div className="rhyme-lesson-buttons">
                     <button className="secondary-action-button align-start" onClick={handleSaveRhymeLesson}>Lektion zur DNA hinzufügen</button>
-                    <button
-                        type="button"
-                        className="tertiary-action-button align-start"
-                        onClick={handleMigrateClick}
-                        title="Schreibt alle gelernten Reim-Beispiele in den DNA-Index."
-                    >
-                        Reime migrieren
-                    </button>
+
                 </div>
             </div>
 
