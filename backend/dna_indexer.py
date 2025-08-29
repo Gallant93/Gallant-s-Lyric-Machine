@@ -18,16 +18,16 @@ def _f(name):
 
 # ---- Signatur
 def signature(word: str) -> Tuple:
-    # ERST normalisieren, dann analysieren
     normalized_word = word
     try:
-        # Versuche die Backend-Normalisierung zu verwenden
         if 'normalize_er_schwa' in _BINDINGS:
             normalized_word = _BINDINGS['normalize_er_schwa'](word)
     except:
         pass
-    
-    count = _f("count_syllables")(normalized_word)
+
+    # Silbenzählung mit Original-Wort
+    count = _f("count_syllables")(word)
+    # Vokalanalyse mit normalisiertem Wort
     seq   = tuple(_f("extract_vowel_sequence")(normalized_word))
     fst, fst_len = _f("first_vowel_and_length")(normalized_word)
     core  = _f("inner_stressed_core")(normalized_word)
@@ -41,54 +41,46 @@ def _load_index() -> Dict:
     with open(p, "r", encoding="utf-8") as f:
         return json.load(f)
 
-def _save_index(idx: Dict): 
+def _save_index(idx: Dict):
     with open(_store_path(), "w", encoding="utf-8") as f:
         json.dump(idx, f, ensure_ascii=False, indent=2)
 
-# ---- Upsert eines Beispielpaars (wird beim DNA-Feature „Reim beibringen" aufgerufen)
-def upsert_example(input_word: str, output_word: str) -> None:
-    idx = _load_index()
-    sig_in = repr(signature(input_word))
+# ---- Pattern-Registry: Neue Datenstruktur ----
+def _load_pattern_index() -> Dict:
+    p = _store_path().replace("dna_index.json", "pattern_index.json")
+    if not os.path.exists(p): return {}
+    with open(p, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-    bucket = idx.setdefault(sig_in, {
-        "heads": {},              # rechte Endglieder/Köpfe
-        "lefts": {},              # linke Bestandteile
-        "phrase_skeletons": {},   # kurze Phrasen-Schablonen
-        "verbatim_outputs": {}    # alle originalen DNA-Outputs zum späteren Ausschluss
+def _save_pattern_index(idx: Dict):
+    p = _store_path().replace("dna_index.json", "pattern_index.json")
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump(idx, f, ensure_ascii=False, indent=2)
+
+# ---- Pattern-Registry: Neue Upsert-Funktion ----
+def upsert_pattern_example(input_word: str, output_word: str) -> None:
+    idx = _load_pattern_index()
+
+    input_sig = signature(input_word)
+    sig_key = repr(input_sig)
+
+    bucket = idx.setdefault(sig_key, {
+        "signature": input_sig,
+        "pattern_examples": [],  # Liste statt Set
+        "validated_rhymes": []   # Liste statt Set
     })
 
-    # 1) Verbatim Output merken (damit wir ihn später NICHT 1:1 ausgeben)
-    o = output_word.strip()
-    bucket["verbatim_outputs"][o] = bucket["verbatim_outputs"].get(o, 0) + 1
+    # Duplikate manuell vermeiden
+    if input_word.lower() not in bucket["pattern_examples"]:
+        bucket["pattern_examples"].append(input_word.lower())
+    if output_word.lower() not in bucket["pattern_examples"]:
+        bucket["pattern_examples"].append(output_word.lower())
 
-    # 2) Zerlegung
-    toks = re.findall(r"[A-Za-zÄÖÜäöüß\-]+", o)
-    low = o.lower()
-    if " " in o:
-        # Phrase: Skeleton aus 2–5 Wörtern anlegen, Kopf = letztes Inhaltswort
-        if toks:
-            skeleton = " ".join(toks[-min(5, len(toks)):]).lower()
-            head = toks[-1].lower()
-            bucket["phrase_skeletons"][skeleton] = bucket["phrase_skeletons"].get(skeleton, 0) + 1
-            bucket["heads"][head] = bucket["heads"].get(head, 0) + 1
-    else:
-        # Einzelwort/Kompositum
-        if "-" in low:
-            left, _, head = low.rpartition("-")
-            left = left.strip(); head = head.strip()
-            if left: bucket["lefts"][left] = bucket["lefts"].get(left, 0) + 1
-            if head: bucket["heads"][head] = bucket["heads"].get(head, 0) + 1
-        else:
-            # heuristischer rechter Kopf (3..7)
-            for k in range(3, min(7, len(low))+1):
-                head = low[-k:]
-                bucket["heads"][head] = bucket["heads"].get(head, 0) + 1
-            if len(low) > 4:
-                left = low[:-3]
-                bucket["lefts"][left] = bucket["lefts"].get(left, 0) + 1
+    pair = f"{input_word.lower()}→{output_word.lower()}"
+    if pair not in bucket["validated_rhymes"]:
+        bucket["validated_rhymes"].append(pair)
 
-    idx[sig_in] = bucket
-    _save_index(idx)
+    _save_pattern_index(idx)
 
 # ---- Generator: recombiniert aus Index, NICHT 1:1
 def generate_from_index(
@@ -188,3 +180,58 @@ def generate_from_index(
         pass
     
     return accepted[:max_results]
+
+# ---- Pattern-Registry: Neuer Generator ----
+def generate_from_patterns(
+    input_word: str,
+    max_results: int,
+    target_phrase_ratio: float,
+    pre_sig: Optional[tuple] = None
+) -> List[str]:
+
+    idx = _load_pattern_index()
+    sig = pre_sig if pre_sig else signature(input_word)
+    sig_key = repr(sig)
+
+    print(f"[DNA] generate_from_patterns: input_word='{input_word}', sig_key='{sig_key[:100]}...'")
+
+    if sig_key not in idx:
+        print(f"[DNA] generate_from_patterns: Kein Bucket gefunden für Signatur")
+        return []
+
+    bucket = idx[sig_key]
+    confirmed_examples = bucket["pattern_examples"]
+    print(f"[DNA] generate_from_patterns: {len(confirmed_examples)} Beispiele im Bucket")
+
+    # Entferne das Eingabewort selbst
+    original_count = len(confirmed_examples)
+    if input_word.lower() in confirmed_examples:
+        confirmed_examples.remove(input_word.lower())
+        print(f"[DNA] generate_from_patterns: Eingabewort '{input_word}' entfernt, {len(confirmed_examples)} Beispiele verbleiben")
+
+    print(f"[DNA] generate_from_patterns: Roh-Beispiele: {confirmed_examples}")
+
+    # Filtere durch die bestehenden Gates
+    passes_seq = _f("passes_phonetic_sequence_gates")
+    passes_syl = _f("passes_syllable_gate")
+    is_word = _f("is_german_word_or_compound")
+    is_phrase = _f("is_valid_phrase")
+
+    candidates = []
+    filtered_out = []
+    for word in confirmed_examples:
+        seq_ok = passes_seq(word)
+        syl_ok = passes_syl(word)
+        word_type_ok = (is_phrase(word) if " " in word else is_word(word))
+
+        if seq_ok and syl_ok and word_type_ok:
+            candidates.append(word)
+            print(f"[DNA] generate_from_patterns: ✓ Kandidat akzeptiert: '{word}'")
+        else:
+            filtered_out.append(word)
+            print(f"[DNA] generate_from_patterns: ✗ Kandidat abgelehnt: '{word}' (seq:{seq_ok}, syl:{syl_ok}, type:{word_type_ok})")
+
+    final_candidates = candidates[:max_results]
+    print(f"[DNA] generate_from_patterns: Finale {len(final_candidates)} Kandidaten (von {len(candidates)} verfügbaren): {final_candidates}")
+
+    return final_candidates

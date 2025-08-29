@@ -28,7 +28,7 @@ except Exception:
 
 from dotenv import load_dotenv
 
-from backend.dna_indexer import bind_helpers as dna_bind, upsert_example as dna_upsert, generate_from_index
+from backend.dna_indexer import bind_helpers as dna_bind, upsert_pattern_example, generate_from_patterns
 
 def _log_module_paths_once():
     try:
@@ -863,16 +863,21 @@ def is_valid_phrase(text: str, freq_thresh: float = 2.5) -> bool:
 
 # --- Einheitliche Voranalyse (liefert Sequenz, first/last, Länge, Silben) ---
 def compute_voranalyse(word: str):
-    # gleiche Sequenz-Funktion wie DNA-Binding (Bevorzugung _vowel_seq_for_compare/vowel_seq_for_compare)
+    # Silbenzählung mit Original-Wort (unveränderlich)
+    sylls = count_syllables(word)
+
+    # Vokalsequenz mit normalisiertem Wort (für korrekte Phonetik)
+    normalized_word = normalize_er_schwa(word) if 'normalize_er_schwa' in globals() else word
+
     if '_vowel_seq_for_compare' in globals() and callable(_vowel_seq_for_compare):
-        seq = _vowel_seq_for_compare(word)
+        seq = _vowel_seq_for_compare(normalized_word)
     elif 'vowel_seq_for_compare' in globals() and callable(vowel_seq_for_compare):
-        seq = vowel_seq_for_compare(word)
+        seq = vowel_seq_for_compare(normalized_word)
     elif 'simple_vowel_scan_de' in globals() and callable(simple_vowel_scan_de):
-        seq = simple_vowel_scan_de(word)
+        seq = simple_vowel_scan_de(normalized_word)
     else:
-        # ultra-einfacher Fallback
-        w = (word or "").lower()
+        # Fallback mit normalisiertem Wort (ultra-einfacher Fallback)
+        w = (normalized_word or "").lower()
         out, i = [], 0
         V = "aeiouyäöü"
         while i < len(w):
@@ -887,8 +892,8 @@ def compute_voranalyse(word: str):
 
     first_family = seq[0] if seq else None
     last_family  = seq[-1] if seq else None
-    first_len    = get_first_length_class(word) if 'get_first_length_class' in globals() else "short"
-    sylls        = count_syllables(word)
+    first_len = get_first_length_class(normalized_word) if 'get_first_length_class' in globals() else "short"
+
     return sylls, seq, first_family, first_len, last_family
 
 # ---- DNA: Lazy Binding, damit beim Import keine NameErrors auftreten ----
@@ -949,8 +954,12 @@ def ensure_dna_bound():
     _seq_name, _seq_func = _seq_candidates[0]
 
     def _extract_vowel_sequence(word: str):
-        normalized_word = normalize_er_schwa(word) if 'normalize_er_schwa' in globals() else word
-        return _seq_func(normalized_word)
+        # ERST normalisieren über gebundene Funktion
+        try:
+            normalized = _BINDINGS.get("normalize_er_schwa", lambda x: x)(word)
+        except:
+            normalized = word
+        return _seq_func(normalized)
 
     def _first_vowel_and_length(word: str):
         seq = _extract_vowel_sequence(word) or []
@@ -965,8 +974,12 @@ def ensure_dna_bound():
             return None
 
     def _last_vowel_family(word: str):
-        normalized_word = normalize_er_schwa(word) if 'normalize_er_schwa' in globals() else word
-        seq = _extract_vowel_sequence(normalized_word) or []
+        # ERST normalisieren
+        try:
+            normalized = _BINDINGS.get("normalize_er_schwa", lambda x: x)(word)
+        except:
+            normalized = word
+        seq = _extract_vowel_sequence(normalized) or []
         return seq[-1] if seq else None
 
     # 2) Gates/Lexikon/PREFIX-Cap aus deinem Projekt
@@ -1007,6 +1020,7 @@ def ensure_dna_bound():
         "is_valid_phrase": _is_phrase,
         "prefix_family_key": _prefix_key,
         "PREFIX_FAMILY_CAP": lambda: PREFIX_FAMILY_CAP,
+        "normalize_er_schwa": normalize_er_schwa,
     })
     DNA_BOUND = True
 
@@ -1696,13 +1710,14 @@ def find_rhymes_endpoint():
             inner_core = None  # (falls du später einen echten Kern-Detektor nutzt, hier einsetzen)
             pre_sig = (base_syllables, tuple(base_seq), first_family, base_len_class, inner_core, last_family)
             app.logger.info(f"DNA Precheck (from Voranalyse): sig={pre_sig}")
-            dna_cands = generate_from_index(
+            dna_cands = generate_from_patterns(
                 input_word, MAX_RESULTS, TARGET_PHRASE_RATIO,
-                rng_seed=data.get("seed"),
                 pre_sig=pre_sig
             )
 
             app.logger.info("DNA: Kandidaten roh=%d", len(dna_cands))
+            if dna_cands:
+                app.logger.info("DNA: Gefundene Kandidaten: %s", dna_cands)
 
             # Harte Filter wie im Pass-1
             def _norm(s: str) -> str:
@@ -1713,25 +1728,43 @@ def find_rhymes_endpoint():
 
             dna_final = []
             seen_norm = set()
+            filtered_duplicates = []
+            filtered_literal = []
+            filtered_prefix = []
+
             for cand in dna_cands:
                 cn = _norm(cand)
-                if cn in seen_norm: 
+                if cn in seen_norm:
+                    filtered_duplicates.append(cand)
                     continue
-                if cn.startswith(forbidden_literal): 
+                if cn.startswith(forbidden_literal):
+                    filtered_literal.append(cand)
                     continue
                 if starts_with_forbidden(cand, forbidden_prefix):
+                    filtered_prefix.append(cand)
                     continue
                 dna_final.append(cand)
                 seen_norm.add(cn)
 
             app.logger.info("DNA: akzeptiert=%d (nach Prefix/Literal/Gates)", len(dna_final))
+            if filtered_duplicates:
+                app.logger.info("DNA: Duplikate entfernt: %s", filtered_duplicates)
+            if filtered_literal:
+                app.logger.info("DNA: Literal-Filter entfernt: %s", filtered_literal)
+            if filtered_prefix:
+                app.logger.info("DNA: Prefix-Filter entfernt: %s", filtered_prefix)
 
             # 80%-Schwelle oder dna_only: direkt antworten
             if len(dna_final) >= max(12, int(0.8 * MAX_RESULTS)) or mode == "dna_only":
-                return jsonify({"candidates": dna_final[:MAX_RESULTS]})
+                final_dna_candidates = dna_final[:MAX_RESULTS]
+                app.logger.info("DNA: Finale Antwort mit %d Kandidaten: %s", len(final_dna_candidates), final_dna_candidates)
+                return jsonify({"candidates": final_dna_candidates})
             # sonst weiter mit deiner bestehenden Pipeline (LLM etc.), die Liste kann später erweitert werden
 
-        accepted.extend(dna_final[:MAX_RESULTS] if 'dna_final' in locals() else [])
+        dna_to_add = dna_final[:MAX_RESULTS] if 'dna_final' in locals() else []
+        if dna_to_add:
+            app.logger.info("DNA: Füge %d Kandidaten zu accepted hinzu: %s", len(dna_to_add), dna_to_add)
+        accepted.extend(dna_to_add)
 
         # Präfix-Blocker direkt bestimmen und loggen
         forbidden_prefix = get_forbidden_prefix(input_word)
@@ -3222,14 +3255,14 @@ def upsert_rhyme_example():
             return jsonify({"ok": False, "error": "output violates syllable gate"}), 422
     except Exception:
         pass
-    dna_upsert(src, dst)
+    upsert_pattern_example(src, dst)
     return jsonify({"ok": True})
 
 @app.route("/api/dna/bulk_upsert", methods=["POST"])
 def bulk_upsert_rhymes():
     data = request.get_json(force=True) or {}
     ensure_dna_bound()
-    items = data.get("examples") or []  # erwartet Liste von {"input": "...", "output": "..."}
+    items = data.get("examples") or []
     n_ok, n_bad = 0, 0
     for row in items:
         src = (row.get("input") or "").strip()
@@ -3238,15 +3271,11 @@ def bulk_upsert_rhymes():
             n_bad += 1
             continue
         try:
-            # Optional: harte Qualitätskontrolle – sonst entfernen
-            if not passes_phonetic_sequence_gates(dst): 
-                n_bad += 1; continue
-            if not passes_syllable_gate(dst):
-                n_bad += 1; continue
-        except Exception:
-            pass
-        dna_upsert(src, dst)
-        n_ok += 1
+            upsert_pattern_example(src, dst)  # Direkte Verwendung der importierten Funktion
+            n_ok += 1
+        except Exception as e:
+            print(f"Pattern upsert failed for {src}->{dst}: {e}")
+            n_bad += 1
     return jsonify({"ok": True, "inserted": n_ok, "skipped": n_bad})
 
 
