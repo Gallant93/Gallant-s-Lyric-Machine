@@ -1402,17 +1402,17 @@ def generate_single_batch(creative_prompt, input_word, base_syllables, MAX_RESUL
     """Generiert EINEN Batch von validierten Reim-Kandidaten"""
     try:
         # Schema für die KI-Abfrage
-            creative_schema = {
-                "type": "object",
+        creative_schema = {
+            "type": "object",
             "properties": {"candidates": {"type": "array", "items": {"type": "string"}, "minItems": 10, "maxItems": 30}},
-                "required": ["candidates"]
-            }
+            "required": ["candidates"]
+        }
 
         # KI-Abfrage durchführen
-            if RHYME_PROVIDER == 'gpt' and openai_client:
+        if RHYME_PROVIDER == 'gpt' and openai_client:
             obj = call_gpt_candidates(creative_prompt, schema=creative_schema)
             candidates = [c for c in obj.get("candidates", []) if isinstance(c, str)]
-            else:
+        else:
             response = anthropic_client.messages.create(
                     model="claude-opus-4-1-20250805",
                     max_tokens=2048,
@@ -1425,51 +1425,51 @@ def generate_single_batch(creative_prompt, input_word, base_syllables, MAX_RESUL
             candidates = [c.strip() for c in obj.get("candidates", []) if isinstance(c, str) and c.strip()]
 
         # Sofort-Filter: verbotene Präfixe rauswerfen
-            if forbidden_prefix:
+        if forbidden_prefix:
             candidates = [cand for cand in candidates if not starts_with_forbidden(cand, forbidden_prefix)]
 
         # Validierung der Kandidaten
-            valid_candidates = []
-            ignore_keywords = [
-                'analyse', 'analysier', 'denkschritt', 'mehrwort', 'finale liste',
-                'silben', 'vokal', 'ergebnis', 'reimsammlung', 'qualitäts', 'iteration',
-                'regel', 'prüfung', 'schema', 'format', 'json', 'beispiel', 'beschreibung', 'erklärung',
-                'alle sind deutsche wörter', 'keine beginnt mit gegen'
-            ]
+        valid_candidates = []
+        ignore_keywords = [
+            'analyse', 'analysier', 'denkschritt', 'mehrwort', 'finale liste',
+            'silben', 'vokal', 'ergebnis', 'reimsammlung', 'qualitäts', 'iteration',
+            'regel', 'prüfung', 'schema', 'format', 'json', 'beispiel', 'beschreibung', 'erklärung',
+            'alle sind deutsche wörter', 'keine beginnt mit gegen'
+        ]
 
         # Vollständige Validierung mit allen Checks
         base_schwa = get_schwa_suffix(input_word)  # NEU: sichtbares Suffix des Basisworts
         seen_signatures = {}  # Varianz-Zähler je Reimfamilie
         MAX_PER_FAMILY = 1  # Default für Familien-Kappung (strikte Einmaligkeit)
 
-            for line in candidates:
-                line = line.strip()
-                if not line or any(keyword in line.lower() for keyword in ignore_keywords):
-                    continue
+        for line in candidates:
+            line = line.strip()
+            if not line or any(keyword in line.lower() for keyword in ignore_keywords):
+                continue
 
             # Meta-Elemente überspringen
-                if line.startswith('#') or line.startswith('##') or re.match(r'^(?:[-=]{3,}|>{1,}|\[.+\]:)', line):
-                    continue
-                if any(ch in line for ch in ['{','}','[',']','`']) or 'http' in line.lower():
-                    continue
+            if line.startswith('#') or line.startswith('##') or re.match(r'^(?:[-=]{3,}|>{1,}|\[.+\]:)', line):
+                continue
+            if any(ch in line for ch in ['{','}','[',']','`']) or 'http' in line.lower():
+                continue
 
             # Bereinigung
-                cleaned_line = re.sub(r'^[-*•]\s*', '', line)
-                cleaned_line = re.sub(r'^\d+\.\s*', '', cleaned_line)
-                cleaned_line = cleaned_line.strip().replace('*', '')
-                cleaned_line = re.sub(r'[,:;–—-]+$', '', cleaned_line).strip()
+            cleaned_line = re.sub(r'^[-*•]\s*', '', line)
+            cleaned_line = re.sub(r'^\d+\.\s*', '', cleaned_line)
+            cleaned_line = cleaned_line.strip().replace('*', '')
+            cleaned_line = re.sub(r'[,:;–—-]+$', '', cleaned_line).strip()
 
             # Bindestrich-Trennung
-                if " - " in cleaned_line:
-                    cleaned_line = cleaned_line.split(" - ")[0].strip()
-                
+            if " - " in cleaned_line:
+                cleaned_line = cleaned_line.split(" - ")[0].strip()
+            
             # Finale Prüfung
-                if not cleaned_line or ':' in cleaned_line:
-                    continue
+            if not cleaned_line or ':' in cleaned_line:
+                continue
 
             # NEU: Schwa-Suffix muss übereinstimmen
-                if get_schwa_suffix(cleaned_line) != base_schwa:
-                    continue
+            if get_schwa_suffix(cleaned_line) != base_schwa:
+                continue
 
             # NEU: Erster Vokal (Familie) muss passen
             if not first_vowel_family_match(input_word, cleaned_line):
@@ -1489,14 +1489,14 @@ def generate_single_batch(creative_prompt, input_word, base_syllables, MAX_RESUL
                     continue
 
             # NEU: Varianzlimit (max 2 pro Reimfamilie)
-                sig = rhyme_signature_fine(cleaned_line)
-                if seen_signatures.get(sig, 0) >= MAX_PER_FAMILY:
-                    continue
-                seen_signatures[sig] = seen_signatures.get(sig, 0) + 1
+            sig = rhyme_signature_fine(cleaned_line)
+            if seen_signatures.get(sig, 0) >= MAX_PER_FAMILY:
+                continue
+            seen_signatures[sig] = seen_signatures.get(sig, 0) + 1
 
             # NEU: Lexikon-Gate
-                is_phrase = bool(re.search(r"\s", cleaned_line))
-                if is_phrase:
+            is_phrase = bool(re.search(r"\s", cleaned_line))
+            if is_phrase:
                 if not is_valid_phrase(cleaned_line, freq_thresh=2.5):
                         continue
 
@@ -1529,250 +1529,182 @@ def generate_single_batch(creative_prompt, input_word, base_syllables, MAX_RESUL
 @app.route('/api/rhymes', methods=['POST'])
 def find_rhymes_endpoint():
     """
-    Zwei-Durchgang-System:
-    1. Erste Runde mit Gemini 2.5 Pro
-    2. Diversitäts-Filter + Nachfüllen
+    Universeller Reim-Endpoint mit Vokal- und Längenanalyse
     """
     try:
         data = request.get_json(force=True) or {}
         input_word = (data.get("input") or data.get("word") or "").strip()
-
+        
         if not input_word:
             return jsonify({"error": "Kein Eingabewort gefunden"}), 400
 
-        max_results = int(data.get("max_results", 20))
-        max_per_ending = int(data.get("max_per_ending", 2))  # Höchstens 2 pro Endung
+        logger.info(f"Analysiere Reime für: '{input_word}'")
 
-        logger.info(f"🎯 Zwei-Durchgang-System für: '{input_word}'")
+        # Phonetische Analyse
+        def extract_vowel_pattern(word):
+            vowels = []
+            for char in word.lower():
+                if char in 'aeiouäöü':
+                    vowels.append(char)
+            return '-'.join(vowels)
 
-        # DURCHGANG 1: Basis-Generierung mit optimierten Einstellungen
-        if input_word.lower() == "polterabend":
-            # Präziserer Prompt mit expliziten Anforderungen
-            prompt_1 = """Finde genau 30 deutsche Wörter mit folgenden exakten Kriterien:
-- Genau 4 Silben (nicht mehr, nicht weniger)
-- Vokalfolge: o-a-a-e (erste Silbe 'o', zweite 'a', dritte 'a', vierte 'e')
-- Existierende deutsche Wörter oder etablierte Komposita
-
-Beispiele die passen: Wohnanlage, Sportanlage, Goldanlage
-
-Gib nur die Wörter zurück, eines pro Zeile, ohne Nummerierung."""
-        else:
-            return jsonify({"error": "Dieser Test funktioniert nur mit 'Polterabend'"}), 400
-
-        logger.info(f"🔄 DURCHGANG 1: Sammle Initial-Kandidaten")
-
-        # Gemini 2.5 Pro (bzw. best available) via neues google-genai API
-        response_1 = GENAI.models.generate_content(
-            model=os.getenv("GEMINI_TEXT_MODEL", "gemini-2.5-pro"),
-            contents=prompt_1,
-            config={
-                "temperature": 0.01,      # Extrem niedrig für maximale Konsistenz
-                "top_p": 0.05,            # Sehr restriktiv
-                "top_k": 5,               # Nur beste Kandidaten
-                "max_output_tokens": 1200,
-                "candidate_count": 1
-            }
-        )
-
-        # Parse erste Runde MIT SOFORTIGER SILBEN-VALIDIERUNG
-        candidates_1 = []
-        rejected_syllables = []
-
-        for line in response_1.text.split('\n'):
-            line = line.strip()
-            if line and not line.startswith('#'):
-                line = re.sub(r'^\d+\.?\s*', '', line)
-                line = re.sub(r'^[-•*]\s*', '', line)
-                line = line.strip()
-                if line and len(line) > 2:
-                    # DOPPELTE VALIDIERUNG: Silben UND Vokalfolge
-                    syllables = count_syllables(line)
-                    vowel_pattern = extract_vowel_pattern(line)
-
-                    if syllables == 4 and vowel_pattern == "o-a-a-e":
-                        candidates_1.append(line)
+        def analyze_vowel_length(word):
+            word = word.lower()
+            vowel_lengths = []
+            i = 0
+            while i < len(word):
+                if word[i] in 'aeiouäöü':
+                    if i + 1 < len(word):
+                        next_chars = word[i+1:i+3]
+                        if (len(next_chars) >= 2 and 
+                            next_chars[0] in 'bcdfghjklmnpqrstvwxyz' and 
+                            next_chars[1] in 'bcdfghjklmnpqrstvwxyz'):
+                            vowel_lengths.append('kurz')
                         else:
-                        rejected_syllables.append((line, syllables, vowel_pattern))
+                            vowel_lengths.append('lang')
+                    else:
+                        vowel_lengths.append('lang')
+                i += 1
+            return vowel_lengths
 
-        logger.info(f"📦 Durchgang 1: {len(candidates_1)} perfekte Treffer, {len(rejected_syllables)} verworfen")
-        if rejected_syllables:
-            logger.info(f"🗑️ Verworfene (Grund): {rejected_syllables[:3]}...")  # Erste 3 mit Details
+        def count_syllables_simple(word):
+            return len([char for char in word.lower() if char in 'aeiouäöü'])
 
-        # DIVERSITÄTS-FILTER: Gruppiere nach Endung UND Präfix
-        def get_ending(word: str, suffix_length: int = 6) -> str:
-            clean_word = re.sub(r'[^a-zäöüß]', '', word.lower())
-            return clean_word[-suffix_length:] if len(clean_word) >= suffix_length else clean_word
+        # Analysiere Eingabewort
+        vowel_pattern = extract_vowel_pattern(input_word)
+        syllable_count = count_syllables_simple(input_word)
+        vowel_lengths = analyze_vowel_length(input_word)
+        length_pattern = '-'.join(vowel_lengths)
 
-        def get_prefix(word: str, prefix_length: int = 4) -> str:
-            clean_word = re.sub(r'[^a-zäöüß]', '', word.lower())
-            return clean_word[:prefix_length] if len(clean_word) >= prefix_length else clean_word
+        logger.info(f"Vokalfolge: {vowel_pattern}, Silben: {syllable_count}, Längen: {length_pattern}")
 
-        ending_groups = {}
-        prefix_groups = {}
+        # Präziserer Prompt ohne Erklärungen
+        prompt = f'''Liste 20 deutsche Wörter auf. Jedes Wort muss:
+- Genau {syllable_count} Silben haben
+- Exakt die Vokalfolge "{vowel_pattern}" haben
+- Das Vokallängenmuster "{length_pattern}" befolgen
 
-        for candidate in candidates_1:
-            ending = get_ending(candidate)
-            prefix = get_prefix(candidate)
+Format: Ein Wort pro Zeile, keine Erklärungen, keine Nummerierung.
 
-            if ending not in ending_groups:
-                ending_groups[ending] = []
-            ending_groups[ending].append(candidate)
+Beispiel für korrektes Format:
+Holzfassade
+Volksballade
+Goldanlage'''
+        
+        logger.info(f"Sende Prompt an Gemini: {prompt}")
 
-            if prefix not in prefix_groups:
-                prefix_groups[prefix] = []
-            prefix_groups[prefix].append(candidate)
+        # Gemini 2.5 Pro (via neues google-genai API)
+        response = GENAI.models.generate_content(
+            model=os.getenv("GEMINI_TEXT_MODEL", "gemini-2.5-pro"),
+            contents=prompt
+        )
+        
+        logger.info(f"📨 Gemini Rohe Antwort: {response.text}")
+        
+        # Verbesserte Filterung der Gemini-Antwort
+        lines = []
+        for line in response.text.split('\n'):
+            line = line.strip()
+            # Überspringe leere Zeilen und offensichtliche Erklärungen
+            if (not line or 
+                line.startswith('#') or 
+                line.startswith('Hier sind') or
+                line.startswith('Ein wichtiger') or
+                line.startswith('Dein Beispielwort') or
+                line.startswith('Ich gehe davon') or
+                line.lower().startswith('**') or
+                ':' in line or
+                len(line.split()) > 3):  # Mehr als 3 Wörter = wahrscheinlich Erklärung
+                continue
+                
+            # Entferne Nummerierung und Aufzählungszeichen
+            line = re.sub(r'^\d+\.?\s*', '', line)
+            line = re.sub(r'^[-•*]\s*', '', line)
+            line = re.sub(r'["""„"«»]', '', line)  # Entferne Anführungszeichen
+            line = line.strip()
+            
+            # Nur echte Einzelwörter oder kurze Komposita
+            if line and len(line) > 2 and len(line.split()) <= 2:
+                lines.append(line)
+        
+        # Diversitäts-Analyse und zweiter Durchgang
+        def get_suffix(word, length=4):
+            return word.lower()[-length:]
+        
+        def get_prefix(word, length=4):  
+            return word.lower()[:length]
 
-        # Wähle max_per_ending pro Endung UND max 2 pro Präfix
-        diverse_candidates = []
-        forbidden_endings = set()
-        forbidden_prefixes = set()
-        used_prefixes = {}
-        used_endings = {}
+        # Analysiere erste Runde auf Diversität
+        suffix_counts = {}
+        prefix_counts = {}
+        for line in lines:
+            suffix = get_suffix(line)
+            prefix = get_prefix(line)
+            suffix_counts[suffix] = suffix_counts.get(suffix, 0) + 1
+            prefix_counts[prefix] = prefix_counts.get(prefix, 0) + 1
 
-        for candidate in candidates_1:
-            ending = get_ending(candidate)
-            prefix = get_prefix(candidate)
+        # Filtere: Max 2 pro Endung
+        diverse_lines = []
+        used_suffixes = {}
+        for line in lines:
+            suffix = get_suffix(line)
+            count = used_suffixes.get(suffix, 0)
+            if count < 2:
+                diverse_lines.append(line)
+                used_suffixes[suffix] = count + 1
 
-            ending_count = used_endings.get(ending, 0)
-            prefix_count = used_prefixes.get(prefix, 0)
+        logger.info(f"Nach Diversitäts-Filter: {len(diverse_lines)} von {len(lines)} Kandidaten")
 
-            # Max 2 pro Endung UND max 2 pro Präfix
-            if ending_count < max_per_ending and prefix_count < 2:
-                diverse_candidates.append(candidate)
-                used_endings[ending] = ending_count + 1
-                used_prefixes[prefix] = prefix_count + 1
+        # ZWEITER DURCHGANG wenn < 20 diverse Ergebnisse
+        if len(diverse_lines) < 20:
+            needed = 20 - len(diverse_lines)
+            forbidden_suffixes = [suffix for suffix, count in used_suffixes.items() if count >= 2]
+            
+            logger.info(f"Starte zweiten Durchgang für {needed} weitere Kandidaten")
+            logger.info(f"Verbiete Endungen: {forbidden_suffixes}")
+            
+            prompt_2 = f'''Liste {needed + 10} weitere deutsche Wörter auf. Jedes Wort muss:
+- Genau {syllable_count} Silben haben  
+- Exakt die Vokalfolge "{vowel_pattern}" haben
+- Das Vokallängenmuster "{length_pattern}" befolgen
+- NICHT auf diese Endungen enden: {", ".join(forbidden_suffixes)}
 
-                if used_endings[ending] >= max_per_ending:
-                    forbidden_endings.add(ending)
-                if used_prefixes[prefix] >= 2:
-                    forbidden_prefixes.add(prefix)
-
-        logger.info(f"🎨 Nach Diversitäts-Filter: {len(diverse_candidates)} Kandidaten")
-        logger.info(f"🚫 Verbotene Endungen: {len(forbidden_endings)}, Verbotene Präfixe: {len(forbidden_prefixes)}")
-
-        # DURCHGANG 2: Auffüllen mit doppelten Restriktionen
-        if len(diverse_candidates) < max_results:
-            needed = max_results - len(diverse_candidates)
-            forbidden_endings_list = ', '.join([f'"-{ending}"' for ending in forbidden_endings])
-            forbidden_prefixes_list = ', '.join([f'"{prefix}-"' for prefix in forbidden_prefixes])
-
-            prompt_2 = f"""Finde {needed + 15} weitere deutsche Wörter mit folgenden exakten Kriterien:
-- Genau 4 Silben (nicht mehr, nicht weniger!)
-- Vokalfolge: o-a-a-e
-- Existierende deutsche Wörter oder etablierte Komposita
-
-WICHTIG - Vermeide diese bereits verwendeten Muster:
-Endungen: {forbidden_endings_list}
-Wortanfänge: {forbidden_prefixes_list}
-
-Die neuen Wörter sollen sowohl verschiedene Anfänge als auch verschiedene Endungen haben.
-Gib nur die Wörter zurück, eines pro Zeile."""
-
-            logger.info(f"🔄 DURCHGANG 2: Fülle {needed} Kandidaten nach")
-            logger.info(f"🚫 Verbiete {len(forbidden_endings)} Endungen und {len(forbidden_prefixes)} Präfixe")
+Format: Ein Wort pro Zeile, keine Erklärungen.'''
 
             response_2 = GENAI.models.generate_content(
                 model=os.getenv("GEMINI_TEXT_MODEL", "gemini-2.5-pro"),
-                contents=prompt_2,
-                config={
-                    "temperature": 0.01,
-                    "top_p": 0.05,
-                    "top_k": 5,
-                    "max_output_tokens": 1200,
-                    "candidate_count": 1
-                }
+                contents=prompt_2
             )
-
-            # Parse zweite Runde MIT SILBEN-VALIDIERUNG
-            candidates_2 = []
-            rejected_syllables_2 = []
-
-            for line in response_2.text.split('\n'):
-                line = line.strip()
-                if line and not line.startswith('#'):
+            
+            if hasattr(response_2, 'text') and response_2.text:
+                # Parse zweite Runde mit gleicher Logik
+                lines_2 = []
+                for line in response_2.text.split('\n'):
+                    line = line.strip()
+                    if (not line or line.startswith('#') or line.startswith('Hier sind') or 
+                        ':' in line or len(line.split()) > 3):
+                        continue
                     line = re.sub(r'^\d+\.?\s*', '', line)
                     line = re.sub(r'^[-•*]\s*', '', line)
                     line = line.strip()
                     if line and len(line) > 2:
-                        # DOPPELTE VALIDIERUNG: Silben UND Vokalfolge
-                        syllables = count_syllables(line)
-                        vowel_pattern = extract_vowel_pattern(line)
+                        # Prüfe Diversität
+                        suffix = get_suffix(line)
+                        if used_suffixes.get(suffix, 0) < 2:
+                            lines_2.append(line)
+                            used_suffixes[suffix] = used_suffixes.get(suffix, 0) + 1
 
-                        if syllables == 4 and vowel_pattern == "o-a-a-e":
-                            ending = get_ending(line)
-                            prefix = get_prefix(line)
+                diverse_lines.extend(lines_2[:needed])
+                logger.info(f"Nach zweitem Durchgang: {len(diverse_lines)} Kandidaten gesamt")
 
-                            ending_count = used_endings.get(ending, 0)
-                            prefix_count = used_prefixes.get(prefix, 0)
-
-                            # Doppelte Prüfung: Endung UND Präfix
-                            if ending_count < max_per_ending and prefix_count < 2:
-                                candidates_2.append(line)
-                                used_endings[ending] = ending_count + 1
-                                used_prefixes[prefix] = prefix_count + 1
-                    else:
-                            rejected_syllables_2.append((line, syllables, vowel_pattern))
-
-            diverse_candidates.extend(candidates_2[:needed])
-            logger.info(f"📦 Durchgang 2: {len(candidates_2)} perfekte Treffer, {len(rejected_syllables_2)} verworfen")
-
-        # Finale Liste
-        final_rhymes = [{"rhyme": candidate} for candidate in diverse_candidates[:max_results]]
-
-        # Statistik loggen
-        final_endings = {}
-        for rhyme in final_rhymes:
-            ending = get_ending(rhyme["rhyme"])
-            final_endings[ending] = final_endings.get(ending, 0) + 1
-
-        logger.info(f"📊 Finale Endungen-Verteilung: {dict(sorted(final_endings.items(), key=lambda x: x[1], reverse=True))}")
-        logger.info(f"✅ {len(final_rhymes)} diverse Reime zurückgegeben")
-
-        return jsonify({"rhymes": final_rhymes}), 200
-
+        rhymes = [{"rhyme": line} for line in diverse_lines[:20]]
+        logger.info(f"✅ Ergebnis: {len(rhymes)} diverse Reime gefunden")
+        
+        return jsonify({"rhymes": rhymes}), 200
+        
     except Exception as e:
-        logger.error(f"❌ Fehler im Zwei-Durchgang-System: {e}", exc_info=True)
+        logger.error(f"Fehler: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
-
-
-def extract_vowel_pattern(word: str) -> str:
-    """Extrahiert die Vokalfolge - optimiert für deutsche Wörter wie Gemini"""
-    word = word.lower().strip()
-    vowels = []
-    i = 0
-
-    # Debug für Polterabend
-    if word == "polterabend":
-        logger.info(f"🔍 Analysiere '{word}' Buchstabe für Buchstabe...")
-
-    while i < len(word):
-        char = word[i]
-
-        # Diphthonge zuerst (wichtig für Reihenfolge!)
-        if i < len(word) - 1:
-            two_char = word[i:i+2]
-            if two_char in ['ei', 'ie', 'au', 'eu', 'äu', 'ai', 'oi', 'ou']:
-                vowels.append(two_char[0])  # Ersten Vokal des Diphthongs
-                if word == "polterabend":
-                    logger.info(f"  Position {i}: Diphthong '{two_char}' → '{two_char[0]}'")
-                i += 2
-                continue
-
-        # Einzelne Vokale
-        if char in 'aeiouyäöü':
-            vowels.append(char)
-            if word == "polterabend":
-                logger.info(f"  Position {i}: Vokal '{char}'")
-        elif word == "polterabend":
-            logger.info(f"  Position {i}: Konsonant '{char}' (ignoriert)")
-
-        i += 1
-
-    pattern = '-'.join(vowels)
-    if word == "polterabend":
-        logger.info(f"🎯 '{word}' → Vokalfolge: '{pattern}'")
-
-    return pattern
 
 
 @app.route('/api/generate-rhyme-line', methods=['POST'])
