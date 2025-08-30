@@ -2018,9 +2018,310 @@ Gib nur JSON zurück: {{"candidates":["Wort1","Phrase mit zwei Wörtern","Kompos
             logger.info(f"--> Finale Ausgabe: {len(final_rhymes)} Reime werden an das Frontend gesendet.")
             logger.info("="*50 + "\n")
             return jsonify({"rhymes": final_rhymes}), 200
+
+
+
+
+                # NEU: Annahmeliste + optionale Rejektgründe
+                debug_mode = bool(data.get('debug_validation', False))
+                accepted_second = []
+                rejected_reasons = []  # nur wenn debug_mode True
+
+                # Gleiche Post-Processing-Pipeline wie im ersten Lauf (nur Zeilenquelle ist jetzt 'second_lines')
+                for raw in second_lines:
+                    line = (raw or "").strip()
+                    reason = None  # NEU: Ablehnungsgrund (nur für Debug-Log)
+                    
+                    # === NEU: "Nur Phrasen" hart (wenn phrase_only_needed=True) ===
+                    if phrase_only_needed and not re.search(r"\s", line):
+                        if debug_mode: rejected_reasons.append((line, "phrase_only"))
+                        continue
+                    # === ENDE NEU ===
+                    
+                    if not line or any(keyword in line.lower() for keyword in ignore_keywords):
+                        reason = "phrase_only"
+                        if DEBUG_VALIDATION: logger.info(f"SP REJECT ({reason}): {line}")
+                        if debug_mode: rejected_reasons.append((line, "phrase_only"))
+                        continue
+                    if line.startswith('#') or line.startswith('##') or re.match(r'^(?:[-=]{3,}|>{1,}|\[.+\]:)', line):
+                        reason = "phrase_only"
+                        if DEBUG_VALIDATION: logger.info(f"SP REJECT ({reason}): {line}")
+                        if debug_mode: rejected_reasons.append((line, "phrase_only"))
+                        continue
+                    if any(ch in line for ch in ['{','}','[',']','`']) or 'http' in line.lower():
+                        reason = "phrase_only"
+                        if DEBUG_VALIDATION: logger.info(f"SP REJECT ({reason}): {line}")
+                        if debug_mode: rejected_reasons.append((line, "phrase_only"))
+                        continue
+
+                    stats["after_phrase"] += 1
+
+                    cleaned_line = re.sub(r'^\s*[-*•]\s*', '', line)
+                    if ' - ' in cleaned_line and cleaned_line.count(' ') >= 1:
+                        parts = [p.strip() for p in cleaned_line.split(' - ') if p.strip()]
+                        if parts and len(parts[0].split()) <= max_words:
+                            cleaned_line = parts[0]
+                    cleaned_line = cleaned_line.strip().replace('*', '')
+                    cleaned_line = re.sub(r'[,:;–—-]+$', '', cleaned_line).strip()
+
+                    if cleaned_line and len(cleaned_line.split()) <= max_words and ':' not in cleaned_line:
+                        # a) sichtbares Schwa-Suffix muss identisch sein
+                        if get_schwa_suffix(cleaned_line) != base_schwa:
+                            reason = "schwa_mismatch"
+                            if DEBUG_VALIDATION: logger.info(f"SP REJECT ({reason}): {cleaned_line}")
+                            if debug_mode: rejected_reasons.append((cleaned_line, "schwa_mismatch"))
+                            continue
+                        stats["after_schwa"] += 1
+                        # b) erster Vokal (Familie) muss passen
+                        if not first_vowel_family_match(input_word, cleaned_line):
+                            reason = "first_vowel"
+                            if DEBUG_VALIDATION: logger.info(f"SP REJECT ({reason}): {cleaned_line}")
+                            if debug_mode: rejected_reasons.append((cleaned_line, "first_vowel"))
+                            continue
+                        stats["after_first"] += 1
+                        # c) Kern (betonter Endvokal): Familie + Länge/Diphthong
+                        if not vowel_core_compatible(input_word, cleaned_line):
+                            reason = "core"
+                            if DEBUG_VALIDATION: logger.info(f"SP REJECT ({reason}): {cleaned_line}")
+                            if debug_mode: rejected_reasons.append((cleaned_line, "core"))
+                            continue
+                        stats["after_core"] += 1
+                        # c.5) NEU: Silbenzahl muss exakt der des Basiswortes entsprechen
+                        if count_syllables(cleaned_line) != base_syllables:
+                            reason = "syllables"
+                            if DEBUG_VALIDATION: logger.info(f"SP REJECT ({reason}): {cleaned_line}")
+                            if debug_mode: rejected_reasons.append((cleaned_line, "syllables"))
+                            continue
+                        stats["after_syll"] += 1
+                        # d) Varianzlimit: max. 2 pro Reimfamilie (feine Signatur: ganze letzte Silbe)
+                        sig = rhyme_signature_fine(cleaned_line)
+                        if seen_signatures.get(sig, 0) >= MAX_PER_FAMILY:
+                            reason = "variance"
+                            if DEBUG_VALIDATION: logger.info(f"SP REJECT ({reason}): {cleaned_line}")
+                            if debug_mode: rejected_reasons.append((cleaned_line, "variance"))
+                            continue
+                        seen_signatures[sig] = seen_signatures.get(sig, 0) + 1
+
+                        # === LEXIKON-GATE: Direkte Validierung vor dem append() ===
+                        is_phrase = bool(re.search(r"\s", cleaned_line))
+                        if is_phrase:
+                            if not is_valid_phrase(cleaned_line, freq_thresh=2.5):
+                                if debug_mode: rejected_reasons.append((cleaned_line, "lexicon"))
+                                continue
+                        else:
+                            if not is_german_word_or_compound(cleaned_line, freq_thresh=2.5):
+                                if debug_mode: rejected_reasons.append((cleaned_line, "lexicon"))
+                                continue
+                        
+                        stats["after_lexicon"] += 1
+                        stats["after_variance"] += 1
+                        stats["accepted"] += 1
+
+                        accepted_second.append(cleaned_line)
+                        valid_candidates.append(cleaned_line)
+
+                logger.info(
+                    "/api/rhymes Second Pass stats: "
+                    f"raw={stats['raw']}, after_phrase={stats['after_phrase']}, "
+                    f"after_schwa={stats['after_schwa']}, after_first={stats['after_first']}, "
+                    f"after_core={stats['after_core']}, after_syll={stats['after_syll']}, "
+                    f"after_variance={stats['after_variance']}, after_lexicon={stats['after_lexicon']}, "
+                    f"accepted={stats['accepted']}"
+                )
+                
+                logger.info(f"/api/rhymes Second Pass accepted: {accepted_second}")
+                if debug_mode:
+                    # Zeige maximal 60 Rejekte, damit das Log lesbar bleibt
+                    logger.info(f"/api/rhymes Second Pass rejected (first 60): {rejected_reasons[:60]}")
+                
+                # NEU: "Wer ist neu?" - Analyse
+                after_set = set(valid_candidates)
+                new_candidates = after_set - before_set
+                if new_candidates:
+                    logger.info(f"/api/rhymes Second Pass: Neue Kandidaten: {sorted(new_candidates)}")
+                
+                logger.info(f"/api/rhymes Second Pass: +{max(0, len(valid_candidates)-len(banned_words))} neue Kandidaten (gesamt: {len(valid_candidates)}).")
+                
+                # === NEU: Pass 3 – Diversity-Füller, wenn noch zu wenig ===
+                if len(valid_candidates) < MAX_RESULTS:
+                    logger.info(f"/api/rhymes: {len(valid_candidates)} < {MAX_RESULTS} – starte Pass 3 (Diversity).")
+
+                    # Bereits verwendete *coarse* Familien sperren (z.B. 'a|nz')
+                    used_coarse = set()
+                    for vc in valid_candidates:
+                        used_coarse.add(rhyme_signature_core(vc))
+
+                    third_prompt = (
+                        f"{creative_prompt}\n\n"
+                        "ERGÄNZUNG (Pass 3 / Diversity):\n"
+                        "- Erzeuge 30 NEUE Kandidaten.\n"
+                        f"- Vermeide strikt diese Reimfamilien (Kern|Koda): {', '.join(sorted(used_coarse)) or '—'}\n"
+                        f"- EXAKT {base_syllables} Silben. Schwa-Suffix = '{base_schwa}'.\n"
+                        "- Antworte NUR als JSON {\"candidates\": [\"...\"]}\n"
+                        + ("- GIB AUSSCHLIESSLICH PHRASEN (2–5 Wörter).\n" if phrase_only_needed else "")
+                    )
+
+                    try:
+                        if RHYME_PROVIDER == 'gpt' and openai_client:
+                            third_obj = call_gpt_candidates(third_prompt, schema=creative_schema)
+                            third_lines = [s for s in (third_obj.get("candidates") or []) if isinstance(s, str)]
+                        else:
+                            third_obj = call_claude(third_prompt, schema=creative_schema)
+                            if isinstance(third_obj, dict) and isinstance(third_obj.get("candidates"), list):
+                                third_lines = [s for s in third_obj["candidates"] if isinstance(s, str)]
+                            else:
+                                third_lines = str(third_obj).splitlines()
+                    except Exception as e:
+                        logger.error(f"/api/rhymes Pass 3: Provider-Fehler: {e}")
+                        third_lines = []
+
+                    accepted_third = []
+                    for raw in third_lines:
+                        line = (raw or "").strip()
+                        if not line or any(k in line.lower() for k in ignore_keywords):
+                            continue
+                        cleaned_line = re.sub(r'^\s*[-*•]\s*', '', line).strip()
+                        cleaned_line = re.sub(r'[,:;–—-]+$', '', cleaned_line).strip()
+
+                        # gleiche Filter wie in Pass 2
+                        if phrase_only_needed and not re.search(r"\s", cleaned_line): 
+                            continue
+                        if get_schwa_suffix(cleaned_line) != base_schwa: 
+                            continue
+                        if not first_vowel_family_match(input_word, cleaned_line): 
+                            continue
+                        if not vowel_core_compatible(input_word, cleaned_line): 
+                            continue
+                        if count_syllables(cleaned_line) != base_syllables: 
+                            continue
+                        # harte Sperre gegen *coarse* Familien
+                        if rhyme_signature_core(cleaned_line) in used_coarse: 
+                            continue
+                        # Varianz auf *fine* Familie
+                        sig_f = rhyme_signature_fine(cleaned_line)
+                        if seen_signatures.get(sig_f, 0) >= MAX_PER_FAMILY: 
+                            continue
+                        seen_signatures[sig_f] = seen_signatures.get(sig_f, 0) + 1
+
+                        # Lexikon-Gate
+                        if re.search(r"\s", cleaned_line):
+                            if not is_valid_phrase(cleaned_line): 
+                                continue
+                        else:
+                            if not is_german_word_or_compound(cleaned_line): 
+                                continue
+
+                        valid_candidates.append(cleaned_line)
+                        accepted_third.append(cleaned_line)
+
+                        if len(valid_candidates) >= MAX_RESULTS:
+                            break
+
+                    logger.info(f"/api/rhymes Pass 3 accepted: {accepted_third}")
+                # === ENDE NEU ===
+                
+
+                
+                # --- Cap & Auswahl (12 Elemente) ---
+                def _is_phrase(s: str) -> bool:
+                    return bool(re.search(r"\s", s))
+
+                def _lex_score(s: str) -> float:
+                    # einfache Häufigkeitsschätzung: letztes Wort bei Phrasen, Ganzwort sonst
+                    try:
+                        from wordfreq import zipf_frequency as _zipf
+                    except Exception:
+                        return 0.0
+                    if _is_phrase(s):
+                        parts = re.findall(r"[A-Za-zÄÖÜäöüß\-]+", s)
+                        last = (parts[-1] if parts else s).lower()
+                        return _zipf(last, "de")
+                    return _zipf((s or "").lower(), "de")
+
+                # Finale Liste für die Auswahl vorbereiten (Duplikate entfernen)
+                valid_candidates = list(dict.fromkeys(valid_candidates))  # Duplikate raus
+
+                phrases = [c for c in valid_candidates if _is_phrase(c)]
+                singles = [c for c in valid_candidates if not _is_phrase(c)]
+                phrases.sort(key=_lex_score, reverse=True)
+                singles.sort(key=_lex_score, reverse=True)
+
+                target_phr = int((TARGET_PHRASE_RATIO * MAX_RESULTS + 0.999))  # ceil
+                sel_phr = phrases[:target_phr]
+                sel_sgl = singles[: max(0, MAX_RESULTS - len(sel_phr))]
+                if len(sel_phr) + len(sel_sgl) < MAX_RESULTS:
+                    need = MAX_RESULTS - (len(sel_phr) + len(sel_sgl))
+                    # aus der jeweils anderen Gruppe auffüllen
+                    if len(sel_phr) < target_phr:
+                        sel_phr += phrases[len(sel_phr): len(sel_phr)+need]
+                    else:
+                        sel_sgl += singles[len(sel_sgl): len(sel_sgl)+need]
+
+                final_list = (sel_phr + sel_sgl)[:MAX_RESULTS]
+                
+                # --- NEU: finale Auswahl mit Familienlimit + Phrasenquote (strenger) ---
+                from collections import defaultdict
+
+                pool = valid_candidates  # Liste nach allen Gates
+                family_count = defaultdict(int)
+
+                def fam(x: str) -> str:
+                    return rhyme_signature_fine(x)  # trennt z.B. -kranz/-tanz/-schwanz
+
+                target_phr = 0 if phrase_only_needed else max(0, int(round(TARGET_PHRASE_RATIO * MAX_RESULTS)))
+
+                phr_queue  = [c for c in pool if ' ' in c]
+                sing_queue = [c for c in pool if ' ' not in c]
+
+                chosen = []
+
+                # 1) Phrasen bis Zielquote (mit Familienlimit)
+                for c in list(phr_queue):
+                    if sum(1 for y in chosen if ' ' in y) >= target_phr: break
+                    f = fam(c)
+                    if family_count[f] >= MAX_PER_FAMILY: continue
+                    chosen.append(c); family_count[f] += 1
+                    if len(chosen) >= MAX_RESULTS: break
+
+                # 2) Singles auffüllen (mit Familienlimit)
+                for c in list(sing_queue):
+                    if len(chosen) >= MAX_RESULTS: break
+                    f = fam(c)
+                    if family_count[f] >= MAX_PER_FAMILY: continue
+                    chosen.append(c); family_count[f] += 1
+
+                # 3) Rest ggf. wieder mit Phrasen (mit Familienlimit)
+                if len(chosen) < MAX_RESULTS:
+                    for c in phr_queue:
+                        if len(chosen) >= MAX_RESULTS: break
+                        if c in chosen: continue
+                        f = fam(c)
+                        if family_count[f] >= MAX_PER_FAMILY: continue
+                        chosen.append(c); family_count[f] += 1
+
+                phr_ct = sum(1 for x in chosen if ' ' in x)
+                sing_ct = len(chosen) - phr_ct
+                logger.info(f"/api/rhymes Cap (neu): target={MAX_RESULTS}, chosen={len(chosen)} (phrases={phr_ct}, singles={sing_ct}), max_per_family={MAX_PER_FAMILY}, target_phrase_ratio={TARGET_PHRASE_RATIO}")
+                
+                logger.info(f"/api/rhymes Cap: target={MAX_RESULTS}, chosen={len(chosen)} (phrases={len([x for x in chosen if ' ' in x])}, singles={len([x for x in chosen if ' ' not in x])})")
+                logger.info(f"/api/rhymes Accepted (final {len(chosen)}): {chosen}")
+
+                # Finale Antwort nach dem Second Pass neu erstellen
+                final_rhymes = []
+                for candidate in chosen:
+                    final_rhymes.append({"rhyme": candidate})
+                random.shuffle(final_rhymes)
+            # === ENDE NEU ===
+            
+            logger.info(f"--> Finale Ausgabe: {len(final_rhymes)} Reime werden an das Frontend gesendet.")
+            logger.info("="*50 + "\n")
+            return jsonify({"rhymes": final_rhymes}), 200
+
         except Exception as e:
-            logger.error(f"Fehler in /api/rhymes: {e}")
+            logger.error(f"Fehler bei kreativer Generierung: {e}")
             return jsonify({"error": str(e)}), 500
+
+    
 
 
 @app.route('/api/generate-rhyme-line', methods=['POST'])
