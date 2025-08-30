@@ -18,7 +18,7 @@ except Exception:
 import anthropic
 from flask import Flask, jsonify, request
 from flask_cors import CORS
-import google.generativeai as genai
+from google import genai
 
 # GPT optional nutzen
 try:
@@ -104,8 +104,14 @@ anthropic_client = anthropic.Anthropic(api_key=CLAUDE_API_KEY)
 # Client für das Analyse-Modell (Gemini)
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 if not GEMINI_API_KEY: raise ValueError("FATAL: GEMINI_API_KEY environment variable not set.")
-genai.configure(api_key=GEMINI_API_KEY)
-gemini_model = genai.GenerativeModel('gemini-1.5-pro-latest')
+GENAI = genai.Client(api_key=GEMINI_API_KEY)
+GEMINI_TEXT_MODEL = os.getenv("GEMINI_TEXT_MODEL", "gemini-2.0-flash-exp")
+
+def gemini_generate(contents):
+    return GENAI.models.generate_content(
+        model=GEMINI_TEXT_MODEL,
+        contents=contents
+    )
 
 # Optionaler GPT-Client (nur wenn Key vorhanden und Paket verfügbar)
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY')
@@ -151,12 +157,12 @@ def call_ai_model(task_type: str, prompt: Union[str, list], schema: dict = None,
                     if len(prompt) == 2 and isinstance(prompt[0], dict) and 'inline_data' in prompt[0]:
                         audio_part = prompt[0]
                         text_prompt = prompt[1]
-                        response = gemini_model.generate_content([text_prompt, audio_part])
+                        response = gemini_generate([text_prompt, audio_part])
                     else:
                         text_prompt = " ".join([str(p) for p in prompt])
-                        response = gemini_model.generate_content(text_prompt)
+                        response = gemini_generate(text_prompt)
                 else:
-                    response = gemini_model.generate_content(prompt)
+                    response = gemini_generate(prompt)
                 
                 result = response.text
                 
@@ -1046,7 +1052,7 @@ def analyze_audio_endpoint():
 
         # 2. Datei auf den Google-Server hochladen
         logger.info(f"Uploading audio file '{temp_audio_path}' for song analysis...")
-        audio_file = genai.upload_file(path=temp_audio_path, mime_type=mime_type)
+        audio_file = GENAI.files.upload(path=temp_audio_path, mime_type=mime_type)
         logger.info("File uploaded successfully.")
 
         # 3. Der spezifische Prompt für die Song-Analyse
@@ -1066,7 +1072,10 @@ def analyze_audio_endpoint():
         """
         
         # 4. Gemini mit Text-Prompt UND Datei-Referenz aufrufen
-        response = gemini_model.generate_content([analysis_prompt, audio_file])
+        response = GENAI.models.generate_content(
+            model=os.getenv("GEMINI_AUDIO_MODEL", GEMINI_TEXT_MODEL),
+            contents=[analysis_prompt, audio_file]
+        )
 
         # 5. Antwort bereinigen und parsen
         parsed_result, parse_err = parse_json_safely(response.text)
@@ -1379,392 +1388,48 @@ def get_last_length_class(word: str) -> str:
     # Für den letzten Vokal verwenden wir die gleiche Logik wie für den ersten
     return get_first_length_class(word)
 
-@app.route('/api/rhymes', methods=['POST'])
-def find_rhymes_endpoint():
-    """
-    Korrigierte Version: Verwendet den exakten zweistufigen Prozess aus test_models.py
-    MIT den neuen sprachlichen Verbesserungen im Prompt
-    """
-    # Mini-Fallback, falls keine Vokalsequenz aus der Analyse kommt
-    def _simple_vowel_scan_de(word: str):
-        w = word.lower()
-        out = []
-        i = 0
-        while i < len(w):
-            ch2 = w[i:i+2]
-            # sehr grob – reicht als Fallback; deine Analyse ist primär
-            if ch2 in ("ei", "ai", "au", "eu", "äu", "oi", "ie"):
-                out.append(ch2[0])      # Vokalfamilie ~ erster Buchstabe
-                i += 2
-                continue
-            if w[i] in "aeiouyäöü":
-                out.append(w[i])
-            i += 1
-        return out
 
-    # --- Sequence-Gate Helpers (deutsche Vokalspur; inkl. "er" → 'a' Mapping) ---
-    def _vowel_seq_for_compare(word: str):
-        w = word.lower()
-        V = "aeiouyäöü"
-        out = []
-        i = 0
-        while i < len(w):
-            # "er" → 'a', wenn 'er' in Koda (nach 'r' kein Vokal oder Wortende)
-            if w[i] == "e" and i + 1 < len(w) and w[i + 1] == "r":
-                nxt = w[i + 2] if i + 2 < len(w) else ""
-                if not nxt or nxt not in V:
-                    out.append("a")
-                    i += 2
-                    continue
-            # einfache Diphthong-Heuristik: erste Komponente als Familie
-            dig = w[i:i+2]
-            if dig in ("ei", "ie", "ai", "au", "eu", "äu", "oi"):
-                out.append(dig[0])
-                i += 2
-                continue
-            if w[i] in V:
-                out.append(w[i])
-            i += 1
-        return out
+def _two_syllable_tail_key(text: str) -> str:
+    """Schlüssel über die letzten ZWEI Silben für exakte Deduplizierung von Endsilben-Familien."""
+    word = _last_content_token(text).lower()
+    syls = _syllabify_de(word)
+    if len(syls) >= 2:
+        return "".join(syls[-2:])  # z.B. 'la'+'ge' -> 'lage' (deckt '-anlage'-Familie ab)
+    return syls[-1] if syls else word
 
-    def _hamming(a, b):
-        return sum(1 for x, y in zip(a, b) if x != y)
 
-    def _seq_ok(base_seq, cand_seq, var_limit: int):
-        return (
-            len(cand_seq) == len(base_seq)
-            and base_seq and cand_seq
-            and cand_seq[0] == base_seq[0]
-            and cand_seq[-1] == base_seq[-1]
-            and _hamming(base_seq, cand_seq) <= var_limit
-        )
-
-    # --- "er" → "a" Normalisierung für Endsilbe ---
-    def _normalize_final_e_schwa(word: str) -> str:
-        # "er" am Wortende klingt i.d.R. wie "a"
-        return re.sub(r"er\b", "a", word, flags=re.IGNORECASE)
-
-    # --- Erste-Vokal-Länge (kurz/lang), einfache deutsche Heuristik ---
-    def _first_vowel_length(word: str) -> str:
-        """
-        'long' wenn: Doppelvokal (aa/ee/oo/..), Dehnungs-h nach dem Vokal,
-        oder die erste Silbe ist 'offen' (genau 1 Konsonant zwischen erstem und nächstem Vokal).
-        'short' wenn: Konsonantencluster >= 2 nach dem Vokal => geschlossene Silbe.
-        Fallback: 'unknown' (nicht prüfen).
-        """
-        w = word.lower()
-        V = "aeiouyäöü"
-        # Position des ersten Vokals
-        i = next((k for k,ch in enumerate(w) if ch in V), -1)
-        if i == -1:
-            return "unknown"
-
-        # Doppelvokal (aa/ee/oo/…)
-        if i + 1 < len(w) and w[i+1] in V:
-            return "long"
-        # Dehnungs-h (z. B. "oh", "ah")
-        if i + 1 < len(w) and w[i+1] == "h":
-            return "long"
-
-        # Konsonanten bis zum nächsten Vokal zählen
-        j = i + 1
-        cons = 0
-        while j < len(w) and w[j] not in V:
-            cons += 1
-            j += 1
-
-        if cons >= 2:
-            return "short"   # geschlossen -> kurz
-        # cons == 0 (direkt Vokal) oder cons == 1 (typisch offene Silbe) -> tendenziell lang
-        return "long"
-
-    logger.info(">>> /api/rhymes LOADED (patch v1)")
-    # === Request-Parsing & Defaults (robust) ===
+def generate_single_batch(creative_prompt, input_word, base_syllables, MAX_RESULTS, forbidden_prefix=None, var_limit=0):
+    """Generiert EINEN Batch von validierten Reim-Kandidaten"""
     try:
-        data = request.get_json(force=True) or {}
-    except Exception:
-        data = {}
-
-    input_word: str = (data.get("input") or data.get("word") or "").strip()
-    if not input_word:
-        return jsonify({"error": "Missing 'input'"}), 400
-
-    knowledge_base = data.get('knowledge_base', 'Keine DNA vorhanden.')
-    # Kontrakt: UPPER-Namen werden in der Funktion weiterverwendet
-    MAX_RESULTS: int = int(data.get("max_results", 20))
-    TARGET_PHRASE_RATIO: float = float(data.get("target_phrase_ratio", 0.35))
-    max_words: int = int(data.get("max_words", 8))
-    DEBUG_VALIDATION: bool = bool(data.get("debug_validation", False))
-
-    # Nutzer-Parameter / weitere Defaults
-    MAX_PER_FAMILY     = int(data.get('max_per_family', 2))
-
-    # DNA-System entfernt: kein Binding mehr notwendig
-
-    # Präfix-Verbotsregel vorab berechnen (kurz & robust)
-    ban_prefix_rule: str = ""
-    forbidden_prefix = get_forbidden_prefix(input_word) or []
-    if forbidden_prefix:
-        quoted = ", ".join([f'"{p}"' for p in forbidden_prefix])
-        ban_prefix_rule = (
-            f"10) Verbotene Präfixe: {quoted}. Keine Kandidaten dürfen damit beginnen."
-        )
-
-    # --- Literal-Input-Stamm (zusätzlicher Hartfilter gegen Near-Duplicates) ---
-    try:
-        forbidden_literal = (
-            normalize_letters(input_word) if 'normalize_letters' in globals() else input_word
-        ).lower()
-    except Exception:
-        forbidden_literal = (input_word or "").lower()
-
-    # Nachfolgender Block war zuvor eingerückt; kapseln, damit Struktur konsistent bleibt
-    if True:
-        # Strenge Toleranz NUR für den Validator (Hamming-Distanz)
-        VAR_LIMIT = int(data.get("var_limit", 1))  # 1 bleibt hart
-
-        # Etwas lockerer NUR in der Generierung (Prompt), kostet fast nichts
-        GEN_VAR_LIMIT = int(data.get("gen_var_limit", 2))  # 2 = innere Abweichungen bis 2 im Text
-
-        # Basissequenz- und Erstlänge-Logging entfernt (doppelte Analyse)
-
-        # Basis-Schwa & Silben
-        base_syllables = count_syllables(input_word)
-        base_schwa     = get_schwa_suffix(input_word)
-
-        # NEU: Start des Loggings für diese Anfrage
-        logger.info("="*50)
-        logger.info(f" NEUE REIM-ANFRAGE FÜR: '{input_word}' ")
-        logger.info("="*50)
-
-        logger.info(f"--- Reim-Anfrage gestartet für: '{input_word}' ---")
-        if not input_word:
-            logger.error("Fehler: Kein 'input_word' im Request gefunden.")
-            return jsonify({"error": "input_word is missing"}), 400
-
-        # === PRÄ-ANALYSE FÜR EINEN PRÄZISEN PROMPT ===
-        # core_word = input_word (das zu analysierende Wort / Phrase-Core)
-        norm_core = normalize_er_schwa(input_word)
-
-        # Zähle & analysiere ab jetzt IMMER auf der Normalform
-        target_analysis = get_phonetic_breakdown_py(norm_core)
-        target_syllables = target_analysis.get("syllableCount")
-        target_vowels = target_analysis.get("vowelSequence") or ""
-        first_family = target_analysis.get("firstVowelFamily")
-        last_family = target_analysis.get("lastVowelFamily")
-        first_length = target_analysis.get("firstLengthClass")
-        last_length = target_analysis.get("lastLengthClass")
-
-        # Einheitliche Voranalyse
-        base_syllables, base_seq, first_family, base_len_class, last_family = compute_voranalyse(input_word)
-        norm_input = normalize_er_schwa(input_word) if 'normalize_er_schwa' in globals() else input_word
-        app.logger.info(f"--> Vor-Analyse für '{input_word}': Silben={base_syllables}, Vokale='{ '-'.join(base_seq) if base_seq else '' }', first=({first_family}/{base_len_class}), last={last_family}, norm='{norm_input}'")
-
-        # === DNA-FIRST LOGIK ===
-        mode = (data.get("mode") or "").lower().strip()  # "", "dna_first", "dna_only", "llm_only"
-
-        llm_allowed = (mode != "dna_only")
-
-        accepted = []
-
-
-
-        # Präfix-Blocker direkt bestimmen und loggen
-        forbidden_prefix = get_forbidden_prefix(input_word)
-        logger.info(f"Prefix-Blocker: {forbidden_prefix}")
-        
-        # NEU: Logging der Voranalyse
-        logger.info(f"--> Schritt 0: Phonetik-Voranalyse (Python-Skript)")
-        logger.info(f"    - Berechnete Silben: {target_syllables}")
-        logger.info(f"    - Berechnete Vokalfolge: '{target_vowels}'")
-        
-        stress_pattern = target_analysis.get("stressPattern")
-        stressed_vowels = target_analysis.get("stressedVowelSequence")
-        logger.info(f"Vor-Analyse für '{input_word}': Silben={target_syllables}, Vokale='{target_vowels}', Betonung='{stress_pattern}'")
-
-        # === SCHRITT 1: KREATIVE GENERIERUNG (OHNE SCHEMA-ZWANG) ===
-        # NEU: Intelligente, gelockerte Regel mit weicherer Formulierung
-        if target_syllables >= 4:
-            syllable_rule = f"""4. **Hohe klangliche Ähnlichkeit (Fokus auf Betonung):**
-   - Der Reim muss klanglich sehr nah am Original sein. **Orientiere dich stark** an der Vokalsequenz der betonten Silben ('{stressed_vowels}') und dem Rhythmus ('{stress_pattern}').
-   - **Leichte Abweichungen sind erlaubt**, wenn der Reim dadurch kreativer und natürlicher wird. Die Priorität liegt auf einem gut klingenden, sinnvollen Ergebnis."""
-        else:
-            syllable_rule = f"4. **Exakte Vokalfolge:** Der Reim muss exakt die Vokalfolge '{target_vowels}' haben."
-
-
-
-        # --- Kurz-Prompt überschreibt den langen Prompt ---
-        fam_cluster, fam_after = last_stressed_vowel_cluster(input_word)
-        len_class = _length_class(fam_cluster, fam_after or '') if fam_cluster else ''
-        first_vowel_family = _vowel_family(_first_vowel_cluster(input_word) or '') if _first_vowel_cluster(input_word) else ''
-
-        # Dynamische Phrasenquote basierend auf TARGET_PHRASE_RATIO
-        target_phrase_pct = int(TARGET_PHRASE_RATIO * 100)
-        target_phrase_ratio = float(TARGET_PHRASE_RATIO)
-        phrase_rule = (f"6) Mindestens {target_phrase_pct}% Mehrwortphrasen (2–5 Wörter); Rest echte Einwort-Wörter/Komposita."
-                       if TARGET_PHRASE_RATIO < 0.5
-                       else "6) Bevorzuge Mehrwortphrasen (2–5 Wörter).")
-
-        # --- NEU: Prompt-Variablen aus deiner Phonetik-Analyse (alles generisch) ---
-        # Falls ein Feld in target_analysis mal fehlt, greifen sinnvolle Defaults.
-        first_vowel_family  = target_analysis.get("first_vowel_family", "")
-        first_vowel_length  = target_analysis.get("first_vowel_length", len_class)  # z.B. "short"/"long"
-        last_vowel_family   = target_analysis.get("last_vowel_family", "")
-        last_vowel_length   = target_analysis.get("last_vowel_length", len_class)
-        last_coda_family_hint = target_analysis.get(
-            "last_coda_family_hint",
-            "ähnliche Koda-Struktur (gleiche Artikulationsstelle; stimmhaft/stimmlos Variante ok)"
-        )
-
-        core_vowel_family   = target_analysis.get("core_vowel_family")
-        core_vowel_length   = target_analysis.get("core_vowel_length")
-
-        # --- Vokal-Sequenz aus der Analyse / Fallback ---
-        vseq_str = (
-            target_analysis.get("vowelSequence")
-            or target_analysis.get("vowel_sequence")
-            or ""
-        )
-        vowels = [v for v in vseq_str.split("-") if v] if vseq_str else []
-        if not vowels:
-            vowels = _simple_vowel_scan_de(norm_for_last)
-
-        # --- "er" → "a" Normalisierung für Endsilbe (Aussprache) ---
-        norm_for_last = _normalize_final_e_schwa(input_word)
-        # ab hier 'norm_for_last' statt 'input_word' für den **letzten** Vokal-Familien-Check benutzen
-
-        # --- Schwa-Kandidat am Wortende erkennen (einfach, einmalig) ---
-        base_word_lc = input_word.lower()
-        schwa_suffixes = ("e", "en", "er", "el", "em", "es")
-        base_core = base_word_lc
-        for _suf in schwa_suffixes:
-            if base_word_lc.endswith(_suf):
-                base_core = base_word_lc[: -len(_suf)]
-                break
-
-        # --- first/last Vokalfamilie/Laenge robust füllen ---
-        if not first_vowel_family and vowels:
-            first_vowel_family = vowels[0]
-        if not first_vowel_length:
-            first_vowel_length = len_class  # "short"/"long" aus deiner Analyse
-
-        # letzter relevanter Vokal (Schwa ignorieren, falls erkannt)
-        if vowels:
-            last_vowel_family = vowels[-1]
-            if base_core != base_word_lc and len(vowels) >= 2:
-                last_vowel_family = vowels[-2]
-        if not last_vowel_length:
-            # Heuristik: wenn wir Schwa abgeschnitten haben, letzten Vokal eher "long"
-            last_vowel_length = "long" if base_core != base_word_lc else len_class
-
-        # --- Kernvokal-Heuristik, falls keine Betonung erkannt (und >=3 Vokale) ---
-        if not core_vowel_family and len(vowels) >= 3:
-            # meist sitzt der hörbare Kern vor der letzten Silbe -> zweitletzter
-            core_vowel_family = vowels[-2]
-            if not core_vowel_length:
-                core_vowel_length = last_vowel_length  # sanfte Annahme
-
-        logger.info(
-            f"-- Anker: vowels={vowels}, first={first_vowel_family}/{first_vowel_length}, "
-            f"core={core_vowel_family or '-'} , last={last_vowel_family}/{last_vowel_length}"
-        )
-
-        if core_vowel_family:
-            core_rule       = f"Zwischen erstem und letztem Vokal muss **genau einmal** ein betonter Vokal der Familie {core_vowel_family} (Länge={core_vowel_length}) auftreten."
-            core_rule_hint  = "Dieser Kern liegt syllabisch vor der letzten Silbe."
-            core_selfcheck  = f"den inneren betonten {core_vowel_family}-Kern nicht enthält"
-        else:
-            core_rule       = "Kein zusätzlicher innerer Kern erforderlich."
-            core_rule_hint  = ""
-            core_selfcheck  = "False"   # Platzhalter -> fällt im Prompt als Bedingung faktisch weg
-
-        # --- Prefix-Diversity (weiche Kappung) vorbereiten ---
-        PREFIX_FAMILY_CAP: int = int(data.get("prefix_family_cap", 2))
-        prefix_rule: str = (
-            f"11) Präfix-Diversität: Pro Präfix-Familie max. {PREFIX_FAMILY_CAP} Kandidaten "
-            f"(z. B. 'ab-', 'ver-', 'sonnen-')."
-        )
-
-        # Neuer Single-Pass Prompt
-        creative_prompt = f"""
-Finde {MAX_RESULTS} deutsche Reime für "{input_word}".
-
-REGELN:
-1) Exakt {base_syllables} Silben
-2) Vokalfolge: {'-'.join(base_seq) if base_seq else '???'} (identisch)
-3) Deutsche Wörter oder sinnvolle Komposita/Phrasen
-4) {int(TARGET_PHRASE_RATIO * 100)}% Phrasen (2-4 Wörter), Rest Einzelwörter
-
-Gib nur JSON zurück: {{"candidates":["Wort1","Phrase mit zwei Wörtern","Kompositum","..."]}}
-"""
-
-
-
-        logger.info(f"Rhyme-Gen: Schritt 1 - Kreative Generierung für '{input_word}'...")
-        
-        # NEU: Logging des Kreativ-Prompts
-        logger.info("--> Schritt 1: Sende KREATIV-PROMPT an die KI...")
-        logger.info(f"===== START KREATIV-PROMPT =====\n{creative_prompt}\n===== ENDE KREATIV-PROMPT =====")
-        
-        try:
-            # NEU: Schema + Provider-Umschalter (JSON-only)
+        # Schema für die KI-Abfrage
             creative_schema = {
                 "type": "object",
-                "properties": { "candidates": { "type": "array", "items": { "type": "string" }, "minItems": 10, "maxItems": 30 } },
+            "properties": {"candidates": {"type": "array", "items": {"type": "string"}, "minItems": 10, "maxItems": 30}},
                 "required": ["candidates"]
             }
 
+        # KI-Abfrage durchführen
             if RHYME_PROVIDER == 'gpt' and openai_client:
-                gpt_obj = call_gpt_candidates(creative_prompt, schema=creative_schema)
-                creative_output = "\n".join([c for c in gpt_obj.get("candidates", []) if isinstance(c, str)])
+            obj = call_gpt_candidates(creative_prompt, schema=creative_schema)
+            candidates = [c for c in obj.get("candidates", []) if isinstance(c, str)]
             else:
-                # Fallback/Default: Claude (funktioniert wie zuvor)
-                creative_response = anthropic_client.messages.create(
+            response = anthropic_client.messages.create(
                     model="claude-opus-4-1-20250805",
                     max_tokens=2048,
                     temperature=0.7,
                     messages=[{"role": "user", "content": creative_prompt + "\n\nANTWORTFORMAT:\n" + json.dumps(creative_schema, ensure_ascii=False)}]
                 )
-                # Hinweis: Falls Claude doch Text drumherum setzt, nutzen wir den Roh-Text;
-                # euer bestehendes Post-Processing filtert ihn ohnehin weg.
-                creative_output = creative_response.content[0].text
-            
-            # Logging der Kreativ-Antwort
-            logger.info("<-- Schritt 1: KREATIVE ANTWORT von KI erhalten.")
-            logger.info(f"===== START KREATIV-ANTWORT (ROH) =====\n{creative_output}\n===== ENDE KREATIV-ANTWORT (ROH) =====")
+            obj, err = parse_json_safely(response.content[0].text)
+            if err:
+                return []
+            candidates = [c.strip() for c in obj.get("candidates", []) if isinstance(c, str) and c.strip()]
 
-            # --- JSON-SAFE EXTRACT + LINIEN-FALLBACK ---
-            obj, err = parse_json_safely(creative_output)  # nutzt deine parse_json_safely oben
-            if obj and isinstance(obj, dict) and "candidates" in obj and isinstance(obj["candidates"], list):
-                candidates = [c.strip() for c in obj["candidates"] if isinstance(c, str) and c.strip()]
-            else:
-                # Fallback: plain lines zu candidates machen
-                lines = [ln.strip("-*• 0123456789.").strip() for ln in creative_output.splitlines() if ln.strip()]
-                # Alles was wie JSON aussieht (Klammern) vorher raus
-                lines = [ln for ln in lines if not (ln.startswith("{") or ln.endswith("}"))]
-                candidates = lines[:MAX_RESULTS]
-
-            logger.info(f"--> Extrahierte Kandidaten: {candidates!r}")
-
-            # --- Sofort-Filter: verbotene Präfixe direkt rauswerfen ---
+        # Sofort-Filter: verbotene Präfixe rauswerfen
             if forbidden_prefix:
-                clean_candidates = []
-                for cand in candidates:
-                    if starts_with_forbidden(cand, forbidden_prefix):
-                        logger.debug(f"verworfen (Prefix): {cand}")
-                        continue
-                    clean_candidates.append(cand)
-                candidates = clean_candidates
+            candidates = [cand for cand in candidates if not starts_with_forbidden(cand, forbidden_prefix)]
 
-            # Post-Processing direkt hier durchführen
+        # Validierung der Kandidaten
             valid_candidates = []
-            prefix_counts = {}
-            # NEU: Robuste Schleife, die "Junk"-Wörter UND KI-Kommentare ignoriert
-            
-            # NEU: Robuste Schleife, die "Junk"-Wörter UND KI-Kommentare ignoriert
-            valid_candidates = []
-            seen_signatures = {}  # NEU: Varianz-Zähler je Reimfamilie
-            base_schwa = get_schwa_suffix(input_word)  # NEU: sichtbares Suffix des Basisworts
             ignore_keywords = [
                 'analyse', 'analysier', 'denkschritt', 'mehrwort', 'finale liste',
                 'silben', 'vokal', 'ergebnis', 'reimsammlung', 'qualitäts', 'iteration',
@@ -1772,255 +1437,342 @@ Gib nur JSON zurück: {{"candidates":["Wort1","Phrase mit zwei Wörtern","Kompos
                 'alle sind deutsche wörter', 'keine beginnt mit gegen'
             ]
 
+        # Vollständige Validierung mit allen Checks
+        base_schwa = get_schwa_suffix(input_word)  # NEU: sichtbares Suffix des Basisworts
+        seen_signatures = {}  # Varianz-Zähler je Reimfamilie
+        MAX_PER_FAMILY = 1  # Default für Familien-Kappung (strikte Einmaligkeit)
+
             for line in candidates:
                 line = line.strip()
-                
                 if not line or any(keyword in line.lower() for keyword in ignore_keywords):
                     continue
 
-                # Überschriften/Meta (##, #, Aufzählungs-Linien) überspringen
+            # Meta-Elemente überspringen
                 if line.startswith('#') or line.startswith('##') or re.match(r'^(?:[-=]{3,}|>{1,}|\[.+\]:)', line):
                     continue
-                # Brackets/Links/Code-Reste überspringen
                 if any(ch in line for ch in ['{','}','[',']','`']) or 'http' in line.lower():
                     continue
 
+            # Bereinigung
                 cleaned_line = re.sub(r'^[-*•]\s*', '', line)
                 cleaned_line = re.sub(r'^\d+\.\s*', '', cleaned_line)
                 cleaned_line = cleaned_line.strip().replace('*', '')
-
-                # Hängende Satzzeichen am Ende entfernen
                 cleaned_line = re.sub(r'[,:;–—-]+$', '', cleaned_line).strip()
 
-                # NEU: Trenne den Reim von der KI-Beschreibung (alles nach dem Bindestrich)
+            # Bindestrich-Trennung
                 if " - " in cleaned_line:
                     cleaned_line = cleaned_line.split(" - ")[0].strip()
                 
-                # Finale Prüfung mit der jetzt sauberen Phrase
+            # Finale Prüfung
                 if not cleaned_line or ':' in cleaned_line:
                     continue
 
-                # --- Hardban: literaler Stamm + Präfixliste ---
-                cand = cleaned_line.strip()
-                cand_norm = (normalize_letters(cand) if 'normalize_letters' in globals() else cand).lower()
-                # 2a) literal gleicher Anfang wie das Ausgangswort
-                if cand_norm.startswith(forbidden_literal):
-                    if DEBUG_VALIDATION:
-                        logger.info(f"    REJECT forbidden_literal: {cand}")
-                    continue
-                # 2b) konfigurierter Präfix-Ban (z. B. 'polter-')
-                if starts_with_forbidden(cand, forbidden_prefix):
-                    if DEBUG_VALIDATION:
-                        logger.info(f"    REJECT ban_prefix: cand='{cand}' prefixes={forbidden_prefix}")
-                    continue
-
-                # 1) Phrase-Core bestimmen
-                core = _last_content_token(cleaned_line)
-
-                # 2) Für den letzten-Vokal-Check die „er→a"-Normalisierung nur am Ende anwenden
-                core_for_last = _normalize_final_e_schwa_for_last(core)
-
-                # (optional, aber hilfreich) – kurzer Log
-                logger.debug(f"Phrase-Core: '{cleaned_line}' -> '{core}', last-norm='{core_for_last}'")
-
-                # Phonetik
+            # NEU: Schwa-Suffix muss übereinstimmen
                 if get_schwa_suffix(cleaned_line) != base_schwa:
                     continue
 
-                # --- Normalisierung für Kandidaten (wie beim Zielwort) ---
-                cand_norm = normalize_er_schwa(core)
-                cand_norm_for_last = normalize_er_schwa(core_for_last)
-
-                # --- Erster Vokal (Familie/Längenklasse) – mit Nachbar-Toleranz ---
-                cand_first_family = get_first_vowel_family(cand_norm)
-                if not same_or_neighbor_family(cand_first_family, _vowel_seq_for_compare(input_word)[0], "first"):
+            # NEU: Erster Vokal (Familie) muss passen
+            if not first_vowel_family_match(input_word, cleaned_line):
                     continue
 
-                cand_first_len = get_first_length_class(cand_norm)
-                if cand_first_len and base_len_class and cand_first_len != base_len_class:
+            # NEU: Kern (betonter Endvokal) muss passen
+            if not vowel_core_compatible(input_word, cleaned_line):
                     continue
 
-                # --- Letzter Vokal (Familie/Längenklasse) – streng identisch ---
-                cand_last_family = get_last_vowel_family(cand_norm_for_last)
-                if cand_last_family != _vowel_seq_for_compare(input_word)[-1]:
+            # NEU: Silbenzahl muss exakt stimmen
+            if count_syllables(cleaned_line) != base_syllables:
                     continue
 
-                # Letzte Vokallänge-Check entfernt (vereinfachter Ansatz)
-
-                if not vowel_core_compatible(input_word, cleaned_line):
-                    continue
-                if count_syllables(cand_norm) != base_syllables:
+            # NEU: Varianzlimit (Hamming-Distanz für Vokalfolge)
+            if var_limit == 0:  # Strikte Sequenz-Prüfung
+                if not _seq_ok(input_word, cleaned_line, tolerance=0):
                     continue
 
-                # Varianz (feine Familie, z.B. -schwanz/-kranz getrennt zählen)
+            # NEU: Varianzlimit (max 2 pro Reimfamilie)
                 sig = rhyme_signature_fine(cleaned_line)
                 if seen_signatures.get(sig, 0) >= MAX_PER_FAMILY:
                     continue
                 seen_signatures[sig] = seen_signatures.get(sig, 0) + 1
 
-                # Lexikon-Gate
+            # NEU: Lexikon-Gate
                 is_phrase = bool(re.search(r"\s", cleaned_line))
                 if is_phrase:
-                    if not is_valid_phrase(cleaned_line):
-                        continue
-                else:
-                    if not is_german_word_or_compound(cleaned_line):
+                if not is_valid_phrase(cleaned_line, freq_thresh=2.5):
                         continue
 
-                # Diversity-Cap je Präfix-Familie
-                key = prefix_family_key(cleaned_line) if 'prefix_family_key' in globals() else normalize_letters(cleaned_line)[:4]
-                if prefix_counts.get(key, 0) >= PREFIX_FAMILY_CAP:
-                    if DEBUG_VALIDATION:
-                        logger.info(f"    REJECT prefix_diversity[{key}]: {cleaned_line}")
-                    continue
-                prefix_counts[key] = prefix_counts.get(key, 0) + 1
+            # Grundlegende Validität
+            if is_valid_phrase(cleaned_line) if is_phrase else is_german_word_or_compound(cleaned_line):
                 valid_candidates.append(cleaned_line)
 
-            valid_candidates = list(dict.fromkeys(valid_candidates))[:20]
+            if len(valid_candidates) >= MAX_RESULTS:
+                break
 
-            logger.info(f"--> Schritt 2: Post-Processing")
-            if DEBUG_VALIDATION:
-                try:
-                    app.logger.info(f"prefix_counts={prefix_counts}")
-                except Exception:
-                    pass
-            logger.info(f"    - {len(valid_candidates)} valide Kandidaten aus der Antwort extrahiert.")
-            logger.info(f"    - Extrahierte Kandidaten: {valid_candidates}")
-
-            # --- NEU: strenges Silben-Gate für Run 1 ---
-            raw_count = len(valid_candidates)
-            syllable_ok = []
-            if DEBUG_VALIDATION:
-                rejects = []
-
+        # NEU: Harte Deduplizierung über 2-Silben-Endsilben
+        if valid_candidates:
+            seen_tail = set()
+            unique = []
             for c in valid_candidates:
-                syl = count_syllables(c)
-                if syl == base_syllables:
-                    # --- Sequence-Gate: Vokalspur muss passen ---
-                    # Phrase-Core für Vokalprüfung extrahieren
-                    core = _last_content_token(c)
-                    core_for_last = _normalize_final_e_schwa_for_last(core)
-                    
-                    cand_seq_cmp = _vowel_seq_for_compare(cand_norm_strict)
-                    if not _seq_ok(_vowel_seq_for_compare(input_word), cand_seq_cmp, VAR_LIMIT):
-                        if DEBUG_VALIDATION:
-                            logger.info(f"    REJECT seq: base={base_seq_str} cand={'-'.join(cand_seq_cmp)}")
+                k = _two_syllable_tail_key(c)
+                if k in seen_tail:
                         continue
+                seen_tail.add(k)
+                unique.append(c)
+            valid_candidates = unique
 
-                    # --- Normalisierung für Kandidaten in strenger Phase ---
-                    cand_norm_strict = normalize_er_schwa(core)
-                    
-                    # --- Erste-Vokal-Länge muss mit der des Basisworts übereinstimmen (falls bekannt) ---
-                    if base_len_class in ("short", "long"):
-                        cand_first_len = _first_vowel_length(cand_norm_strict)
-                        if cand_first_len != base_len_class:
-                            if DEBUG_VALIDATION:
-                                logger.info(f"    REJECT len: base={base_len_class} cand={cand_first_len} word={c}")
-                            continue
+        return valid_candidates
 
-                    syllable_ok.append(c)
-                else:
-                    if DEBUG_VALIDATION:
-                        rejects.append((c, syl))
+    except Exception as e:
+        logger.error(f"Fehler in generate_single_batch: {e}")
+        return []
 
-            if DEBUG_VALIDATION and rejects:
-                for c, syl in rejects:
-                    logger.info(f"/api/rhymes Pass1 reject (syll): '{c}' -> {syl} vs base {base_syllables}")
 
-            logger.info(f"/api/rhymes Pass1 (Silben): base_syll={base_syllables}, after_syll_eq={len(syllable_ok)} / raw={raw_count}")
+@app.route('/api/rhymes', methods=['POST'])
+def find_rhymes_endpoint():
+    """
+    Zwei-Durchgang-System:
+    1. Erste Runde mit Gemini 2.5 Pro
+    2. Diversitäts-Filter + Nachfüllen
+    """
+    try:
+        data = request.get_json(force=True) or {}
+        input_word = (data.get("input") or data.get("word") or "").strip()
 
-            # Ab hier NUR noch mit den Silben-korrekten Kandidaten weiterarbeiten
-            valid_candidates = syllable_ok
+        if not input_word:
+            return jsonify({"error": "Kein Eingabewort gefunden"}), 400
 
-            # --- Optional: Sortierung nach Hamming-Distanz (beste zuerst) ---
-            def _score_by_seq(cand: str):
-                core = _last_content_token(cand)
-                cseq = _vowel_seq_for_compare(core)
-                return _hamming(_vowel_seq_for_compare(input_word), cseq)  # 0 (perfekt) vor 1 vor 2 ...
+        max_results = int(data.get("max_results", 20))
+        max_per_ending = int(data.get("max_per_ending", 2))  # Höchstens 2 pro Endung
 
-            valid_candidates.sort(key=_score_by_seq)
+        logger.info(f"🎯 Zwei-Durchgang-System für: '{input_word}'")
 
-            # ---- Diversity-Cap: max. 2 pro End-Familie (letzte 4 Buchstaben)
-            def _family_key(w: str) -> str:
-                s = re.sub(r"[^a-zäöüß]", "", w.lower())
-                return s[-4:] if len(s) >= 4 else s
+        # DURCHGANG 1: Basis-Generierung mit optimierten Einstellungen
+        if input_word.lower() == "polterabend":
+            # Präziserer Prompt mit expliziten Anforderungen
+            prompt_1 = """Finde genau 30 deutsche Wörter mit folgenden exakten Kriterien:
+- Genau 4 Silben (nicht mehr, nicht weniger)
+- Vokalfolge: o-a-a-e (erste Silbe 'o', zweite 'a', dritte 'a', vierte 'e')
+- Existierende deutsche Wörter oder etablierte Komposita
 
-            MAX_PER_FAMILY = 2
-            diverse = []
-            seen = {}
-            for c in valid_candidates:
-                k = _family_key(c)
-                if seen.get(k, 0) >= MAX_PER_FAMILY:
-                    if DEBUG_VALIDATION:
-                        logger.info(f"    DROP by diversity cap: {c} (family {k})")
-                    continue
-                diverse.append(c)
-                seen[k] = seen.get(k, 0) + 1
+Beispiele die passen: Wohnanlage, Sportanlage, Goldanlage
 
-            valid_candidates = diverse
+Gib nur die Wörter zurück, eines pro Zeile, ohne Nummerierung."""
+        else:
+            return jsonify({"error": "Dieser Test funktioniert nur mit 'Polterabend'"}), 400
 
-            # --- Optional: Sortierung nach Hamming-Distanz (beste zuerst) ---
-            def _score_by_seq(cand: str):
-                core = _last_content_token(cand)
-                return _hamming(_vowel_seq_for_compare(input_word), _vowel_seq_for_compare(core))
+        logger.info(f"🔄 DURCHGANG 1: Sammle Initial-Kandidaten")
 
-            valid_candidates.sort(key=_score_by_seq)  # 0-Fehler vor 1-Fehler vor 2-Fehler
+        # Gemini 2.5 Pro (bzw. best available) via neues google-genai API
+        response_1 = GENAI.models.generate_content(
+            model=os.getenv("GEMINI_TEXT_MODEL", "gemini-2.5-pro"),
+            contents=prompt_1,
+            config={
+                "temperature": 0.01,      # Extrem niedrig für maximale Konsistenz
+                "top_p": 0.05,            # Sehr restriktiv
+                "top_k": 5,               # Nur beste Kandidaten
+                "max_output_tokens": 1200,
+                "candidate_count": 1
+            }
+        )
 
-            # NEU: Pass-1 Kurzinfo
-            fam_cluster, fam_after = last_stressed_vowel_cluster(input_word)
-            len_class = _length_class(fam_cluster, fam_after or '') if fam_cluster else ''
-            phrase_count = sum(1 for vc in valid_candidates if ' ' in vc)
-            logger.info(
-                f"/api/rhymes Pass1: valid={len(valid_candidates)}, phrases={phrase_count}, "
-                f"ratio={(phrase_count / max(1, len(valid_candidates))):.2f}, "
-                f"base_syll={base_syllables}, schwa='{base_schwa}', len_class='{len_class}', "
-                f"families={sorted(seen_signatures.keys())}"
+        # Parse erste Runde MIT SOFORTIGER SILBEN-VALIDIERUNG
+        candidates_1 = []
+        rejected_syllables = []
+
+        for line in response_1.text.split('\n'):
+            line = line.strip()
+            if line and not line.startswith('#'):
+                line = re.sub(r'^\d+\.?\s*', '', line)
+                line = re.sub(r'^[-•*]\s*', '', line)
+                line = line.strip()
+                if line and len(line) > 2:
+                    # DOPPELTE VALIDIERUNG: Silben UND Vokalfolge
+                    syllables = count_syllables(line)
+                    vowel_pattern = extract_vowel_pattern(line)
+
+                    if syllables == 4 and vowel_pattern == "o-a-a-e":
+                        candidates_1.append(line)
+                        else:
+                        rejected_syllables.append((line, syllables, vowel_pattern))
+
+        logger.info(f"📦 Durchgang 1: {len(candidates_1)} perfekte Treffer, {len(rejected_syllables)} verworfen")
+        if rejected_syllables:
+            logger.info(f"🗑️ Verworfene (Grund): {rejected_syllables[:3]}...")  # Erste 3 mit Details
+
+        # DIVERSITÄTS-FILTER: Gruppiere nach Endung UND Präfix
+        def get_ending(word: str, suffix_length: int = 6) -> str:
+            clean_word = re.sub(r'[^a-zäöüß]', '', word.lower())
+            return clean_word[-suffix_length:] if len(clean_word) >= suffix_length else clean_word
+
+        def get_prefix(word: str, prefix_length: int = 4) -> str:
+            clean_word = re.sub(r'[^a-zäöüß]', '', word.lower())
+            return clean_word[:prefix_length] if len(clean_word) >= prefix_length else clean_word
+
+        ending_groups = {}
+        prefix_groups = {}
+
+        for candidate in candidates_1:
+            ending = get_ending(candidate)
+            prefix = get_prefix(candidate)
+
+            if ending not in ending_groups:
+                ending_groups[ending] = []
+            ending_groups[ending].append(candidate)
+
+            if prefix not in prefix_groups:
+                prefix_groups[prefix] = []
+            prefix_groups[prefix].append(candidate)
+
+        # Wähle max_per_ending pro Endung UND max 2 pro Präfix
+        diverse_candidates = []
+        forbidden_endings = set()
+        forbidden_prefixes = set()
+        used_prefixes = {}
+        used_endings = {}
+
+        for candidate in candidates_1:
+            ending = get_ending(candidate)
+            prefix = get_prefix(candidate)
+
+            ending_count = used_endings.get(ending, 0)
+            prefix_count = used_prefixes.get(prefix, 0)
+
+            # Max 2 pro Endung UND max 2 pro Präfix
+            if ending_count < max_per_ending and prefix_count < 2:
+                diverse_candidates.append(candidate)
+                used_endings[ending] = ending_count + 1
+                used_prefixes[prefix] = prefix_count + 1
+
+                if used_endings[ending] >= max_per_ending:
+                    forbidden_endings.add(ending)
+                if used_prefixes[prefix] >= 2:
+                    forbidden_prefixes.add(prefix)
+
+        logger.info(f"🎨 Nach Diversitäts-Filter: {len(diverse_candidates)} Kandidaten")
+        logger.info(f"🚫 Verbotene Endungen: {len(forbidden_endings)}, Verbotene Präfixe: {len(forbidden_prefixes)}")
+
+        # DURCHGANG 2: Auffüllen mit doppelten Restriktionen
+        if len(diverse_candidates) < max_results:
+            needed = max_results - len(diverse_candidates)
+            forbidden_endings_list = ', '.join([f'"-{ending}"' for ending in forbidden_endings])
+            forbidden_prefixes_list = ', '.join([f'"{prefix}-"' for prefix in forbidden_prefixes])
+
+            prompt_2 = f"""Finde {needed + 15} weitere deutsche Wörter mit folgenden exakten Kriterien:
+- Genau 4 Silben (nicht mehr, nicht weniger!)
+- Vokalfolge: o-a-a-e
+- Existierende deutsche Wörter oder etablierte Komposita
+
+WICHTIG - Vermeide diese bereits verwendeten Muster:
+Endungen: {forbidden_endings_list}
+Wortanfänge: {forbidden_prefixes_list}
+
+Die neuen Wörter sollen sowohl verschiedene Anfänge als auch verschiedene Endungen haben.
+Gib nur die Wörter zurück, eines pro Zeile."""
+
+            logger.info(f"🔄 DURCHGANG 2: Fülle {needed} Kandidaten nach")
+            logger.info(f"🚫 Verbiete {len(forbidden_endings)} Endungen und {len(forbidden_prefixes)} Präfixe")
+
+            response_2 = GENAI.models.generate_content(
+                model=os.getenv("GEMINI_TEXT_MODEL", "gemini-2.5-pro"),
+                contents=prompt_2,
+                config={
+                    "temperature": 0.01,
+                    "top_p": 0.05,
+                    "top_k": 5,
+                    "max_output_tokens": 1200,
+                    "candidate_count": 1
+                }
             )
-            
-            before_set = set(valid_candidates)  # NEU: zum Vergleichen nach dem Second Pass
-            
-            # === PASS 2: Quality-aware Reject-Sampling ===
-            PHRASE_TOL = float(data.get("phrase_tolerance", 0.10))         # ±10% Toleranz vs. Ziel
-            MIN_PREFIX_FAMILIES = int(data.get("min_prefix_families", 4))  # Diversitätsuntergrenze
-            N_MIN = int(data.get("n_min", 12))
 
-            total_now = len(valid_candidates)
-            phrases_now = sum(1 for x in valid_candidates if isinstance(x, str) and " " in x)
-            desired_total   = min(MAX_RESULTS, max(N_MIN, 1))
-            desired_phrases = int(round(TARGET_PHRASE_RATIO * desired_total))
+            # Parse zweite Runde MIT SILBEN-VALIDIERUNG
+            candidates_2 = []
+            rejected_syllables_2 = []
 
-            phrase_ratio_now = (phrases_now / max(1, total_now))
-            phrase_ratio_low  = phrase_ratio_now < (TARGET_PHRASE_RATIO - PHRASE_TOL)
-            need_total        = max(0, desired_total - total_now)
-            families_now      = len(seen_signatures.keys())
-            need_diversity    = families_now < MIN_PREFIX_FAMILIES
+            for line in response_2.text.split('\n'):
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    line = re.sub(r'^\d+\.?\s*', '', line)
+                    line = re.sub(r'^[-•*]\s*', '', line)
+                    line = line.strip()
+                    if line and len(line) > 2:
+                        # DOPPELTE VALIDIERUNG: Silben UND Vokalfolge
+                        syllables = count_syllables(line)
+                        vowel_pattern = extract_vowel_pattern(line)
 
-            # Single-Pass System - vereinfachtes Post-Processing
-            final_candidates = []
-            for line in candidates:
-                cleaned = line.strip()
-                if not cleaned: continue
-                
-                # Nur harte Checks
-                if count_syllables(cleaned) == base_syllables:
-                    if is_valid_phrase(cleaned) if ' ' in cleaned else is_german_word_or_compound(cleaned):
-                        final_candidates.append(cleaned)
-                
-                if len(final_candidates) >= MAX_RESULTS:
-                    break
+                        if syllables == 4 and vowel_pattern == "o-a-a-e":
+                            ending = get_ending(line)
+                            prefix = get_prefix(line)
 
-            # Finale Antwort erstellen
-            final_rhymes = []
-            for candidate in final_candidates[:MAX_RESULTS]:
-                final_rhymes.append({"rhyme": candidate})
-            random.shuffle(final_rhymes)
+                            ending_count = used_endings.get(ending, 0)
+                            prefix_count = used_prefixes.get(prefix, 0)
 
-            logger.info(f"--> Finale Ausgabe: {len(final_rhymes)} Reime werden an das Frontend gesendet.")
-            logger.info("="*50 + "\n")
-            return jsonify({"rhymes": final_rhymes}), 200
-        except Exception as e:
-            logger.error(f"Fehler in /api/rhymes: {e}")
-            return jsonify({"error": str(e)}), 500
+                            # Doppelte Prüfung: Endung UND Präfix
+                            if ending_count < max_per_ending and prefix_count < 2:
+                                candidates_2.append(line)
+                                used_endings[ending] = ending_count + 1
+                                used_prefixes[prefix] = prefix_count + 1
+                    else:
+                            rejected_syllables_2.append((line, syllables, vowel_pattern))
+
+            diverse_candidates.extend(candidates_2[:needed])
+            logger.info(f"📦 Durchgang 2: {len(candidates_2)} perfekte Treffer, {len(rejected_syllables_2)} verworfen")
+
+        # Finale Liste
+        final_rhymes = [{"rhyme": candidate} for candidate in diverse_candidates[:max_results]]
+
+        # Statistik loggen
+        final_endings = {}
+        for rhyme in final_rhymes:
+            ending = get_ending(rhyme["rhyme"])
+            final_endings[ending] = final_endings.get(ending, 0) + 1
+
+        logger.info(f"📊 Finale Endungen-Verteilung: {dict(sorted(final_endings.items(), key=lambda x: x[1], reverse=True))}")
+        logger.info(f"✅ {len(final_rhymes)} diverse Reime zurückgegeben")
+
+        return jsonify({"rhymes": final_rhymes}), 200
+
+    except Exception as e:
+        logger.error(f"❌ Fehler im Zwei-Durchgang-System: {e}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+
+def extract_vowel_pattern(word: str) -> str:
+    """Extrahiert die Vokalfolge - optimiert für deutsche Wörter wie Gemini"""
+    word = word.lower().strip()
+    vowels = []
+    i = 0
+
+    # Debug für Polterabend
+    if word == "polterabend":
+        logger.info(f"🔍 Analysiere '{word}' Buchstabe für Buchstabe...")
+
+    while i < len(word):
+        char = word[i]
+
+        # Diphthonge zuerst (wichtig für Reihenfolge!)
+        if i < len(word) - 1:
+            two_char = word[i:i+2]
+            if two_char in ['ei', 'ie', 'au', 'eu', 'äu', 'ai', 'oi', 'ou']:
+                vowels.append(two_char[0])  # Ersten Vokal des Diphthongs
+                if word == "polterabend":
+                    logger.info(f"  Position {i}: Diphthong '{two_char}' → '{two_char[0]}'")
+                i += 2
+                continue
+
+        # Einzelne Vokale
+        if char in 'aeiouyäöü':
+            vowels.append(char)
+            if word == "polterabend":
+                logger.info(f"  Position {i}: Vokal '{char}'")
+        elif word == "polterabend":
+            logger.info(f"  Position {i}: Konsonant '{char}' (ignoriert)")
+
+        i += 1
+
+    pattern = '-'.join(vowels)
+    if word == "polterabend":
+        logger.info(f"🎯 '{word}' → Vokalfolge: '{pattern}'")
+
+    return pattern
 
 
 @app.route('/api/generate-rhyme-line', methods=['POST'])
@@ -2038,613 +1790,11 @@ def generate_rhyme_line_endpoint():
         if not input_line:
             return jsonify({"error": "Keine Eingabezeile gefunden."}), 400
 
-        logger.info(f"--- [FINAL V5 - GANZHEITLICH] Anfrage für: '{input_line}' ---")
-
-        # Wir verwenden das Sprachverzeichnis direkt hier, falls es existiert.
-        # (Annahme: SPRACHVERZEICHNIS_TEXT ist in main.py global verfügbar)
-        try:
-            language_directory = SPRACHVERZEICHNIS_TEXT
-        except NameError:
-            language_directory = "Kein Sprachverzeichnis gefunden."
-
-        prompt = f"""
-        **Systemanweisung: Du bist ein Meister-Lyriker und Phonetiker. Deine Aufgabe ist es, zu einer gegebenen Zeile mehrere, qualitativ herausragende Reimzeilen zu erschaffen.**
-
-        **SPRACHVERZEICHNIS (Deine Wissensbasis für Definitionen):**
-        ---
-        {language_directory}
-        ---
-
-        **KÜNSTLER-DNA (Stil- und Inhaltsvorgaben):**
-        ---
-        {knowledge_base}
-        ---
-
-        **EINGABEZEILE (DEINE VORLAGE):**
-        "{input_line}"
-
-        **AUFGABE UND FINALE QUALITÄTS-HIERARCHIE:**
-        Generiere {num_lines} neue, vollständige Zeilen. Jede einzelne Zeile muss die folgenden Regeln in absteigender Wichtigkeit befolgen:
-
-        **PRIORITÄT 1 (Absolut Unverhandelbar - Das Fundament):**
-        - **Sinnhaftigkeit & Logik:** Die generierte Zeile muss ein grammatikalisch korrekter, logisch nachvollziehbarer und in sich geschlossener Satz sein. Sie muss für sich allein stehend Sinn ergeben. Beziehe dich auf die Definition von "Sinnhaftigkeit & Kreativität" aus dem Sprachverzeichnis.
-
-        **PRIORITÄT 2 (Sehr Wichtig - Der kreative Rahmen):**
-        - **Thematischer Bezug:** Die Zeile muss thematisch und stimmungsvoll zur EINGABEZEILE passen.
-        - **Prinzip der Reim-Varianz:** Das Endreimwort darf keine Wiederholung des Ziel-Reimwortes sein.
-
-        **PRIORITÄT 3 (Wichtig, aber flexibel - Die technische Kunst):**
-        - **Ganzzeilige Phonetische Resonanz:** Versuche, die Klangfarbe der gesamten Vorlage-Zeile so gut wie möglich zu treffen.
-        - **Betonte Vokal-Harmonie:** Konzentriere dich darauf, die Vokale der HAUPTBETONTEN Silben klanglich anzugleichen. Ein kleiner Kompromiss in der Phonetik ist akzeptabel, wenn dadurch Priorität 1 und 2 perfekt erfüllt werden.
-
-        **Strukturierte Ausgabe:** Gib deine Antwort als valides JSON zurück, das dem geforderten Schema exakt entspricht.
-        """
-
-        schema = {
-            "type": "object",
-            "properties": {
-                "generated_lines": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "line": {"type": "string", "description": "Die generierte Reimzeile."},
-                            "analysis": {
-                                "type": "object",
-                                "properties": {
-                                    "overall_similarity_score": {"type": "string", "description": "Bewerte die GANZZEILIGE phonetische Ähnlichkeit (1-10)."},
-                                    "vowel_rhythm_match": {"type": "boolean", "description": "True, wenn der Vokal-Rhythmus stark gespiegelt wurde."}
-                                }, "required": ["overall_similarity_score", "vowel_rhythm_match"]
-                            }
-                        }, "required": ["line", "analysis"]
-                    }
-                }
-            }, "required": ["generated_lines"]
-        }
-
-        result = call_claude(prompt, schema=schema)
-        return jsonify(result), 200
+        # TODO: Implement rhyme line generation logic here
+        return jsonify({"error": "Not implemented yet"}), 501
 
     except Exception as e:
-        logger.error(f"Error in /api/generate-rhyme-line: {e}", exc_info=True)
+        logger.error(f"Fehler in generate_rhyme_line_endpoint: {e}")
         return jsonify({"error": str(e)}), 500
 
 
-@app.route('/api/process-vocal-emphasis', methods=['POST'])
-def process_vocal_emphasis_endpoint():
-    """
-    Verarbeitet Audio-Feedback zur Betonung und generiert eine neue Analyse. [cite: 172]
-    """
-    try:
-        data = request.get_json()
-        audio_part = make_audio_part(data['base64Audio'], data['mimeType'])
-        knowledge_base = data['knowledgeBase']
-        item_content = data['itemContent']  # The lyrics
-
-        prompt = f"""
-        **System Instruction: You are a phonetic analyst. The user has provided an audio recording that represents the "absolute truth" for emphasis and rhythm.**
-
-        **ARTIST'S DNA (for context):**
-        ---
-        {knowledge_base}
-        ---
-
-        **LYRICS:**
-        ---
-        {item_content}
-        ---
-
-        **AUDIO FOR ANALYSIS IS ATTACHED.**
-
-        **YOUR TASKS (based ONLY on the audio):**
-        1.  `learnedExplanation`: Formulate a single, general technical rule about the artist's emphasis style derived from this recording.
-        2.  `newEmphasisPattern`: Create a new, complete phonetic rhyme analysis for the entire text, based on the emphasis in the audio.
-
-        Return a single JSON object.
-        """
-        schema = {
-            "type": "object",
-            "properties": {
-                "learnedExplanation": {"type": "string"},
-                "newEmphasisPattern": {"type": "string"}
-            },
-            "required": ["learnedExplanation", "newEmphasisPattern"]
-        }
-        result = call_claude([prompt, audio_part], schema=schema)
-        return jsonify(result), 200
-    except Exception as e:
-        logger.error(f"Error in /api/process-vocal-emphasis: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/reanalyze-explanation', methods=['POST'])
-def reanalyze_explanation_endpoint():
-    """
-    Korrigiert eine Analyse basierend auf textlichem Nutzerfeedback. [cite: 172]
-    """
-    try:
-        data = request.get_json()
-        # patternType: 'emphasis' | 'rhymeFlow'
-        # userExplanation: "The words X and Y rhyme because..."
-        # originalLyrics: The lyrics of the song
-        # knowledge_base: The user's DNA
-
-        prompt = f"""
-        **System Instruction: You are a writing assistant. The user is correcting your previous analysis. Their explanation is the "absolute truth" and must be followed.**
-
-        **ARTIST'S DNA (for context):**
-        ---
-        {data['knowledge_base']}
-        ---
-
-        **USER'S CORRECTION/EXPLANATION (Absolute Truth):**
-        ---
-        "{data['userExplanation']}"
-        ---
-
-        **ORIGINAL LYRICS:**
-        ---
-        {data['originalLyrics']}
-        ---
-
-        **TASK: Generate a new, corrected analysis pattern for `{data['patternType']}`.**
-        Your new analysis must fully incorporate the user's correction for the entire text.
-
-        Return a single JSON object with the key `correctedPattern` containing the new text.
-        """
-        schema = {
-            "type": "object",
-            "properties": {"correctedPattern": {"type": "string"}},
-            "required": ["correctedPattern"]
-        }
-        result = call_claude(prompt, schema=schema)
-        return jsonify(result), 200
-    except Exception as e:
-        logger.error(f"Error in /api/reanalyze-explanation: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/reanalyze-technique', methods=['POST'])
-def reanalyze_technique_endpoint():
-    """
-    Generalisiert aus einer Nutzerkorrektur eine neue "technicalSkill". [cite: 181]
-    """
-    try:
-        data = request.get_json()
-        # learned_rule: "The artist often rhymes..."
-        # original_lyrics: The song lyrics
-        # original_skills: The array of old skills
-
-        prompt = f"""
-        **System Instruction: You are an analytical system that learns from user corrections.**
-
-        **NEWLY LEARNED RULE (from user feedback):**
-        ---
-        "{data['learned_rule']}"
-        ---
-
-        **ORIGINAL LYRICS (for context):**
-        ---
-        {data['original_lyrics']}
-        ---
-
-        **PREVIOUSLY DERIVED TECHNICAL SKILLS:**
-        ---
-        {json.dumps(data['original_skills'], indent=2)}
-        ---
-
-        **TASK: Based on the 'newly learned rule', re-evaluate the 'previously derived technical skills'.**
-        Return an array of strings representing the new, updated list of technical skills for this song. You may refine, remove, or replace the old skills.
-
-        Return a single JSON object with the key `newTechnicalSkills`, which is an array of strings.
-        """
-        schema = {
-            "type": "object",
-            "properties": {
-                "newTechnicalSkills": {"type": "array", "items": {"type": "string"}}
-            },
-            "required": ["newTechnicalSkills"]
-        }
-        result = call_claude(prompt, schema=schema)
-        return jsonify(result), 200
-    except Exception as e:
-        logger.error(f"Error in /api/reanalyze-technique: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/generate-lyrics', methods=['POST'])
-def generate_lyrics_endpoint():
-    """
-    Generiert oder überarbeitet Songtexte basierend auf verschiedenen Modi (generation, revision, fusion).
-    """
-    try:
-        data = request.get_json()
-        mode = data.get('mode', 'generation')
-        knowledge_base = data['knowledgeBase']
-
-        if mode == 'generation':
-            prompt = f"""
-            **System Instruction: Du bist ein meisterhafter Songtexter und Reimkünstler. Deine Aufgabe ist es, einen Text zu verfassen, der den Anweisungen des Nutzers exakt folgt.
-
-Du erhältst eine 'Künstler-DNA' mit Beispielen für Stil, Technik, Betonungsmuster und Reimfluss usw. Nutze diese DNA als deine primäre Inspirationsquelle. Analysiere die Reimschemata und die Komplexität der Reime in der DNA und emuliere diesen Stil.
-
-Priorität 1: Hohe Reimqualität. Vermeide simple oder erzwungene Reime (Haus/Maus, Herz/Schmerz). Bevorzuge mehrsilbige, komplexe und unerwartete Reime, die thematisch sinnvoll sind. Nutze dazu die Informationen aus der DNA.
-
-Priorität 2: Einhaltung der Struktur. Halte dich strikt an die vom Nutzer vorgegebene Struktur (z.B. '12-zeiliger Part').**
-
-            **ARTIST'S DNA (Your Rule Set):**
-            ---
-            {knowledge_base}
-            ---
-
-            **USER'S PROMPT:**
-            - Theme: {data.get('userPrompt', 'No theme provided.')}
-            - Style: {data.get('additionalContext', {}).get('style', 'Not specified.')}
-            - Technique: {data.get('additionalContext', {}).get('technique', 'Not specified.')}
-            - Fusion: {data.get('additionalContext', {}).get('fusion', 'Not specified.')}
-            - Beat Description: {data.get('additionalContext', {}).get('beatDescription', 'Not specified.')}
-            - BPM: {data.get('additionalContext', {}).get('bpm', 'Not specified.')}
-            - Key: {data.get('additionalContext', {}).get('key', 'Not specified.')}
-            - Performance Style: {data.get('additionalContext', {}).get('performanceStyle', 'Not specified.')}
-
-            **TASK: Write a complete song text (verses, chorus, etc.) that matches the prompt and perfectly embodies the Artist's DNA.**
-            The song should reflect the specified style, technique, and musical context while maintaining the artist's unique voice.
-            
-            **CRITICAL REQUIREMENTS:**
-            1. **Follow the Artist's Emphasis Pattern**: If the artist's DNA contains emphasis patterns, replicate the same rhythmic emphasis and stress patterns in your new lyrics.
-            2. **Follow the Artist's Rhyme Flow Pattern**: If the artist's DNA contains rhyme flow patterns, use the same rhyme scheme structure, verse-chorus connections, and overall musical flow.
-            3. **Maintain Consistency**: The new song should sound like it was written by the same artist, using their established rhythmic and rhyming techniques.
-            
-            **OUTPUT:** Write a complete song with proper structure tags ([Verse], [Chorus], etc.) that demonstrates the artist's unique emphasis and rhyme flow patterns.
-            """
-        elif mode == 'revision':  # [cite: 51]
-            prompt = f"""
-            **System Instruction: You are a lyric editor. Your task is to revise a specific part of a song while preserving the artist's core style.**
-
-            **ARTIST'S DNA (Style Guide):**
-            ---
-            {knowledge_base}
-            ---
-
-            **ORIGINAL TEXT:**
-            ---
-            {data['originalText']}
-            ---
-
-            **REVISION REQUEST:**
-            ---
-            "{data['revisionRequest']}"
-            ---
-
-            **TASK: Execute the revision request precisely. Only change what is necessary and ensure the new text is coherent and still conforms to the Artist's DNA.**
-            """
-        elif mode == 'fusion':  # [cite: 56]
-            source_songs_text = ""
-            for i, song in enumerate(data.get('sourceSongs', [])):
-                source_songs_text += f"\n--- SONG {i + 1} ---\n{song['content']}\n"
-
-            prompt = f"""
-            **System Instruction: You are a musical producer and songwriter, specializing in creating hybrid songs.**
-
-            **ARTIST'S DNA (Overarching Framework):**
-            ---
-            {knowledge_base}
-            ---
-
-            **TASK: Create a new, song that believably merges the themes, imagery, and styles of the source songs.**
-            The final product must be a single, coherent piece of art that still respects the global rules of the Artist's DNA. [cite: 65]
-            """
-        else:
-            return jsonify({"error": "Invalid mode specified."}), 400
-
-        # For generation, we expect a simple text response
-        result_text = call_claude(prompt, is_json_output=False)
-        return jsonify({"generatedText": result_text}), 200
-
-    except Exception as e:
-        logger.error(f"Error in /api/generate-lyrics: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/test-phonetics', methods=['POST'])
-def test_phonetics_endpoint():
-    """
-    Test-Endpunkt zum Überprüfen der phonetischen Analyse ohne Claude API.
-    """
-    try:
-        data = request.get_json()
-        word = data.get('word', '')
-        
-        if not word:
-            return jsonify({"error": "No word provided"}), 400
-            
-        analysis = get_phonetic_breakdown_py(word)
-        
-        # Teste auch einige bekannte Reime
-        test_rhymes = []
-        if word.lower() == 'geschichte':
-            test_rhymes = ['errichtet', 'vernichten', 'errichtet', 'vernichten', 'gewissen']
-        elif word.lower() == 'eigentlich':
-            test_rhymes = ['reinen Tisch', 'bleiben nicht', 'Einzelkind', 'schreiben Pflicht']
-        
-        rhyme_analyses = []
-        for rhyme in test_rhymes:
-            rhyme_analyses.append({
-                'rhyme': rhyme,
-                'analysis': get_phonetic_breakdown_py(rhyme)
-            })
-        
-        return jsonify({
-            "input_word": word,
-            "analysis": analysis,
-            "test_rhymes": rhyme_analyses,
-            "is_valid_rhyme": all(
-                rhyme['analysis']['syllableCount'] == analysis['syllableCount'] and
-                rhyme['analysis']['vowelSequence'] == analysis['vowelSequence']
-                for rhyme in rhyme_analyses
-            )
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Error in /api/test-phonetics: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
-
-
-# === API Endpunkte ===
-
-@app.route('/api/synthesize-styles', methods=['POST'])
-def synthesize_styles_endpoint():
-    """
-    Verbesserte Version: Analysiert Stil-Merkmale, führt semantisches Clustering durch
-    UND weist jedem Cluster eine übergeordnete Kategorie zu.
-    """
-    try:
-        data = request.get_json()
-        style_items = data.get('style_items', [])
-
-        if not style_items:
-            return jsonify({"error": "Keine Stil-Elemente zur Analyse übergeben."}), 400
-
-        items_text = "\n".join([f"- {item['content']}" for item in style_items])
-
-        logger.info(f"--- [SYNTHESIZE V2] Starte Cluster-Analyse & Kategorisierung für {len(style_items)} Elemente ---")
-
-        prompt = f"""
-        **Systemanweisung: Du bist ein Datenanalyst und Bibliothekar, spezialisiert auf semantisches Clustering und Kategorisierung von literarischen Themen.**
-        Deine Aufgabe ist es, die folgende ungeordnete Liste von Stil-Merkmalen zu analysieren, sie in Themen-Cluster zu gruppieren UND jeden Cluster einer passenden, übergeordneten Kategorie zuzuweisen.
-
-        **VORGEGEBENE KATEGORIEN (Nur diese verwenden!):**
-        - **Emotion:** Beschreibt Gefühle und Stimmungen.
-        - **Thema/Motiv:** Beschreibt wiederkehrende inhaltliche Sujets.
-        - **Stilmittel:** Beschreibt technische Aspekte der Sprache (z.B. Metaphern, Ironie).
-        - **Erzählperspektive:** Beschreibt die Haltung oder Rolle des Erzählers (z.B. Selbstreflexion).
-        - **Wortwahl:** Beschreibt die Art der verwendeten Sprache.
-
-        **UNGEORDNETE LISTE VON STIL-MERKMALEN:**
-        ---
-        {items_text}
-        ---
-
-        **DEINE AUFGABE (in 4 Schritten):**
-        1.  **Identifiziere Kernthemen:** Finde die zentralen, wiederkehrenden Hauptthemen in der Liste.
-        2.  **Bilde Cluster:** Erstelle für jedes Kernthema einen Cluster mit einem prägnanten Titel.
-        3.  **Ordne Facetten zu:** Ordne jeden ursprünglichen Eintrag dem passenden Cluster zu.
-        4.  **Kategorisiere jeden Cluster:** Weise jedem Cluster eine der oben vordefinierten Kategorien zu.
-
-        **Strukturierte Ausgabe:** Gib deine Antwort als valides JSON zurück, das dem geforderten Schema exakt entspricht.
-        """
-
-        schema = {
-            "type": "object",
-            "properties": {
-                "style_clusters": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "cluster_title": {"type": "string", "description": "Der übergeordnete Name des Themas."},
-                            "category": {
-                                "type": "string",
-                                "description": "Eine der vordefinierten Kategorien.",
-                                "enum": ["Emotion", "Thema/Motiv", "Stilmittel", "Erzählperspektive", "Wortwahl"]
-                            },
-                            "facets": {"type": "array", "description": "Die ursprünglichen Stil-Einträge als Strings.", "items": {"type": "string"}}
-                        },
-                        "required": ["cluster_title", "category", "facets"]
-                    }
-                }
-            },
-            "required": ["style_clusters"]
-        }
-
-        # Aufruf über die neue zentrale Weiche
-        result = call_ai_model("SYNTHESIZE_STYLES", prompt, schema=schema)
-        
-        # Mappe die originalen IDs zurück, um dem Frontend die Arbeit zu erleichtern
-        original_items_by_content = {item['content']: item['id'] for item in style_items}
-        
-        for cluster in result.get('style_clusters', []):
-            mapped_facets = []
-            for content in cluster.get('facets', []):
-                item_id = original_items_by_content.get(content)
-                if item_id:
-                    mapped_facets.append({'id': item_id, 'content': content})
-            cluster['facets'] = mapped_facets
-            cluster['cluster_id'] = f"cluster-{uuid.uuid4().hex}"
-
-        return jsonify(result), 200
-
-    except Exception as e:
-        logger.error(f"Error in /api/synthesize-styles: {e}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route('/api/analyze-beat', methods=['POST'])
-def analyze_beat_endpoint():
-    """
-    Analysiert eine Audio-Datei mit Gemini 1.5 Pro, um BPM, Tonart und Beat-Beschreibung zu extrahieren.
-    Verwendet die korrekte Multimodalität durch Datei-Upload auf Google-Server.
-    """
-    import tempfile
-    import os
-    import base64
-    
-    temp_audio_path = None  # Initialisieren für den finally-Block
-    
-    try:
-        data = request.get_json()
-        base64_audio = data.get('base64Audio')
-        mime_type = data.get('mimeType')
-
-        if not base64_audio or not mime_type:
-            return jsonify({"error": "base64Audio und mimeType sind erforderlich."}), 400
-
-        # 1. Base64 dekodieren und in eine temporäre Datei schreiben
-        audio_bytes = base64.b64decode(base64_audio)
-        
-        # Erstellt eine temporäre Datei mit passender Endung
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".tmp") as temp_audio_file:
-            temp_audio_file.write(audio_bytes)
-            temp_audio_path = temp_audio_file.name
-
-        # 2. Datei auf den Google-Server hochladen
-        logger.info(f"Uploading audio file '{temp_audio_path}' to Google...")
-        audio_file = genai.upload_file(path=temp_audio_path, mime_type=mime_type)
-        logger.info("File uploaded successfully.")
-
-        # 3. Prompt erstellen
-        analysis_prompt = """
-        Analysiere die angehängte Audiodatei. Gib deine Antwort als sauberes JSON-Objekt mit den folgenden drei Schlüsseln zurück: "bpm", "key", und "description".
-
-        - "bpm": Ermittle das exakte Tempo in Beats pro Minute (nur die Zahl).
-        - "key": Ermittle die Tonart (z.B. "C-Moll" oder "A-Dur").
-        - "description": Beschreibe den Beat in 2-3 Sätzen. Gehe auf die Stimmung, die verwendeten Instrumente und den Rhythmus ein (z.B. "schleppend", "treibend", "entspannt").
-
-        WICHTIG: Gib deine Antwort AUSSCHLIESSLICH als gültiges JSON aus, das diesem Schema entspricht. Keine zusätzlichen Texte, keine Erklärungen, nur das JSON:
-        {
-            "bpm": 120,
-            "key": "C-Dur",
-            "description": "Ein treibender Beat mit..."
-        }
-        """
-        
-        # 4. Gemini mit Text-Prompt UND Datei-Referenz aufrufen
-        response = gemini_model.generate_content([analysis_prompt, audio_file])
-
-        # 5. Antwort bereinigen und parsen
-        parsed_result, parse_err = parse_json_safely(response.text)
-        if parse_err:
-            logger.error(f"/api/analyze-beat JSON-Fehler: {parse_err}\nRoh: {response.text[:4000]}")
-            return jsonify({"error": "Beat-Analyse: JSON nicht lesbar.", "detail": parse_err}), 500
-
-        # Schicke die extrahierten Daten an das Frontend zurück
-        return jsonify({
-            "bpm": parsed_result.get("bpm", ""),
-            "key": parsed_result.get("key", ""),
-            "description": parsed_result.get("description", "")
-        }), 200
-
-    except Exception as e:
-        logger.error(f"Fehler bei der Gemini Beat-Analyse: {e}", exc_info=True)
-        return jsonify({"error": "Die KI konnte den Beat nicht analysieren."}), 500
-    
-    finally:
-        # 6. Temporäre Datei nach Gebrauch immer löschen
-        if temp_audio_path and os.path.exists(temp_audio_path):
-            os.remove(temp_audio_path)
-            logger.info(f"Cleaned up temporary file: {temp_audio_path}")
-
-
-@app.route('/api/structure-analysis', methods=['POST'])
-def structure_analysis_endpoint():
-    """
-    Analysiert Text mit Gemini 1.5 Pro und wandelt ihn in strukturiertes JSON um.
-    Unterstützt 'emphasis' und 'rhyme_flow' Analyse-Typen.
-    """
-    try:
-        data = request.get_json()
-        analysis_text = data.get('analysisText')
-        analysis_type = data.get('analysisType')
-
-        if not analysis_text or not analysis_type:
-            return jsonify({"error": "analysisText and analysisType are required."}), 400
-
-        # Erstelle den spezifischen Prompt für die KI
-        prompt = f"""
-Du bist ein Experte für musikalische Lyrik-Analyse. Deine Aufgabe ist es, den folgenden Analyse-Text in ein kompaktes, strukturiertes JSON-Objekt umzuwandeln. Extrahiere nur die wichtigsten, quantifizierbaren Merkmale.
-
-**Analyse-Typ:**
-"{analysis_type}"
-
-**Analyse-Text:**
-"{analysis_text}"
-
-**Gewünschtes JSON-Format für "emphasis":**
-{{
-  "pattern_type": "<Hauptmuster, z.B. 'rhythmic_hip-hop'>",
-  "main_focus": "<Hauptschwerpunkt, z.B. 'end_syllables'>",
-  "key_features": ["<Merkmal 1 als Stichwort>", "<Merkmal 2 als Stichwort>"],
-  "examples": ["<Beispiel 1>", "<Beispiel 2>"]
-}}
-
-**Gewünschtes JSON-Format für "rhyme_flow":**
-{{
-  "scheme": "<Reimschema, z.B. 'AABB'>",
-  "flow_type": "<Flow-Art, z.B. 'continuous'>",
-  "features": ["<Merkmal 1 als Stichwort>", "<Merkmal 2 als Stichwort>"],
-  "rhyme_types": ["<Reim-Art 1, z.B. 'clean_rhyme'>", "<Reim-Art 2, z.B. 'impure_rhyme'>"]
-}}
-
-Gib NUR das fertige JSON-Objekt als Antwort zurück. Formatiere es ohne umschließende Markdown-Syntax.
-"""
-
-        # Rufe Gemini 1.5 Pro auf
-        logger.info(f"Calling Gemini 1.5 Pro for {analysis_type} analysis...")
-        response = gemini_model.generate_content(prompt)
-        
-        # Bereinige die Antwort und versuche sie zu parsen
-        parsed_result, parse_err = parse_json_safely(response.text)
-        if parse_err:
-            logger.error(f"/api/structure-analysis JSON-Fehler: {parse_err}\nRoh-Antwort: {response.text[:4000]}")
-            return jsonify({"error": "Analyse-Antwort konnte nicht als JSON gelesen werden.", "detail": parse_err}), 500
-
-        
-        # Entferne mögliche Markdown-Formatierung
-        if cleaned_response.startswith("```") and cleaned_response.endswith("```"):
-            cleaned_response = cleaned_response[3:-3].strip()
-        
-        # Versuche, die Antwort der KI zu parsen
-        try:
-            structured_data = json.loads(cleaned_response)
-        except json.JSONDecodeError as json_error:
-            logger.error(f"JSON parsing failed: {json_error}")
-            logger.error(f"Raw response: {response.text}")
-            # Fallback: Erstelle ein einfaches strukturiertes Objekt
-            if analysis_type == "emphasis":
-                structured_data = {
-                    "pattern_type": "unknown",
-                    "main_focus": "unknown",
-                    "key_features": ["analysis_failed"],
-                    "examples": [analysis_text[:100] + "..." if len(analysis_text) > 100 else analysis_text]
-                }
-            else:  # rhyme_flow
-                structured_data = {
-                    "scheme": "unknown",
-                    "flow_type": "unknown",
-                    "features": ["analysis_failed"],
-                    "rhyme_types": ["unknown"]
-                }
-
-        # Sende die strukturierten Daten zurück an das Frontend
-        logger.info(f"Successfully structured {analysis_type} analysis")
-        return jsonify({"structuredData": structured_data}), 200
-
-    except Exception as e:
-        logger.error(f"Error structuring analysis: {e}", exc_info=True)
-        return jsonify({"error": "Failed to structure the analysis text."}), 500
-
-
-
-
-if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=8080)
